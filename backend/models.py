@@ -18,6 +18,6 @@ class Message(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id"))
     sender = Column(String)  # "user" veya "assistant"
     content = Column(Text)
-    metadata = Column(Text, nullable=True)
+    message_metadata = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     conversation = relationship("Conversation", back_populates="messages")

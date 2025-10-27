@@ -45,6 +45,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 conversation_id=conversation.id,
                 sender="user",
                 content=data,
+		message_metadata=None,
                 created_at=datetime.utcnow()
             )
             db.add(user_msg)
@@ -57,7 +58,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             assistant_msg = Message(
                 conversation_id=conversation.id,
                 sender="assistant",
-                content=response,
+		message_metadata=None,
+		content=response,
                 created_at=datetime.utcnow()
             )
             db.add(assistant_msg)

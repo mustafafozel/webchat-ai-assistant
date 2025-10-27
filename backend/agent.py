@@ -1,24 +1,18 @@
-from langchain_openai import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolExecutor, ToolInvocation
-from backend.tools import tools
-from backend.config import settings
 import json
-
-llm = ChatOpenAI(model="gpt-3.5-turbo", openai_api_key=settings.OPENAI_API_KEY)
-tool_executor = ToolExecutor(tools)
+import os
+from backend.tools import tools
 
 class AgentState(dict):
+    """Agent state container"""
     pass
 
 def intent_router(state: AgentState):
     """Kullanıcı niyetini belirler."""
-    user_input = state.get("user_input", "")
-    keywords = ["sipariş", "kargo", "iade", "ödeme", "politika"]
+    user_input = state.get("user_input", "").lower()
+    keywords = ["sipariş", "siparis", "kargo", "iade", "ödeme", "odeme", "politika", "garanti"]
     
     for keyword in keywords:
-        if keyword in user_input.lower():
+        if keyword in user_input:
             state["intent"] = "tool"
             return state
     
@@ -27,8 +21,31 @@ def intent_router(state: AgentState):
 
 def retriever(state: AgentState):
     """Knowledge base'den bilgi çeker."""
-    with open("knowledge/kb.json", "r", encoding="utf-8") as f:
-        kb = json.load(f)
+    kb_paths = [
+        "knowledge/kb.json",
+        os.path.join(os.path.dirname(__file__), "..", "knowledge", "kb.json")
+    ]
+    
+    kb = None
+    for path in kb_paths:
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    kb = json.load(f)
+                break
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+    
+    if kb is None:
+        # Default knowledge base
+        kb = {
+            "iade": "İade politikası: Ürünlerinizi 14 gün içinde iade edebilirsiniz.",
+            "kargo": "Kargo süresi: Ortalama 2-4 iş günü içinde teslim edilir.",
+            "ödeme": "Ödeme seçenekleri: Kredi kartı, banka kartı veya kapıda ödeme.",
+            "odeme": "Ödeme seçenekleri: Kredi kartı, banka kartı veya kapıda ödeme.",
+            "politika": "Tüm politikalarımız müşteri memnuniyeti odaklıdır.",
+            "garanti": "Ürünlerimiz 2 yıl garanti kapsamındadır."
+        }
     
     user_input = state.get("user_input", "").lower()
     for key in kb.keys():
@@ -36,19 +53,34 @@ def retriever(state: AgentState):
             state["kb_result"] = kb[key]
             return state
     
-    state["kb_result"] = "İlgili bilgi bulunamadı."
+    state["kb_result"] = "İlgili bilgi bulunamadı. Lütfen daha spesifik bir soru sorun."
     return state
 
 def tool_caller(state: AgentState):
     """Tool çağrısı yapar."""
-    user_input = state.get("user_input", "")
+    user_input = state.get("user_input", "").lower()
     
-    if "sipariş" in user_input:
-        result = tools[0].invoke({"order_id": "12345"})
+    # Sipariş sorgusu
+    if "sipariş" in user_input or "siparis" in user_input:
+        import re
+        order_match = re.search(r'\d{5}', user_input)
+        order_id = order_match.group(0) if order_match else "12345"
+        result = tools[0].invoke({"order_id": order_id})
+    
+    # Kargo sorgusu
     elif "kargo" in user_input:
-        result = tools[1].invoke({"city": "istanbul"})
+        cities = ["istanbul", "ankara", "izmir", "antalya", "bursa"]
+        city = next((c for c in cities if c in user_input), "istanbul")
+        result = tools[1].invoke({"city": city})
+    
+    # Politika sorgusu
+    elif any(keyword in user_input for keyword in ["iade", "politika", "ödeme", "odeme", "garanti"]):
+        topics = ["iade", "kargo", "ödeme", "odeme", "politika", "garanti"]
+        topic = next((t for t in topics if t in user_input), "politika")
+        result = tools[2].invoke({"topic": topic})
+    
     else:
-        result = "Tool bulunamadı."
+        result = "Bu konuda size yardımcı olabilecek bir araç bulunamadı."
     
     state["tool_result"] = result
     return state
@@ -63,23 +95,17 @@ def response_builder(state: AgentState):
     state["response"] = response
     return state
 
-# Graph oluştur
-workflow = StateGraph(AgentState)
-workflow.add_node("intent_router", intent_router)
-workflow.add_node("retriever", retriever)
-workflow.add_node("tool_caller", tool_caller)
-workflow.add_node("response_builder", response_builder)
-
-workflow.set_entry_point("intent_router")
-workflow.add_edge("intent_router", "retriever")
-workflow.add_edge("retriever", "tool_caller")
-workflow.add_edge("tool_caller", "response_builder")
-workflow.add_edge("response_builder", END)
-
-agent_graph = workflow.compile()
-
 def run_agent(user_input: str, session_id: str):
-    """Agent'i çalıştırır."""
+    """
+    Agent'i çalıştırır.
+    Basit pipeline implementasyonu: intent routing -> retrieval -> tool calling -> response
+    """
     state = {"user_input": user_input, "session_id": session_id}
-    result = agent_graph.invoke(state)
-    return result.get("response", "Yanıt üretilemedi.")
+    
+    # Pipeline
+    state = intent_router(state)
+    state = retriever(state)
+    state = tool_caller(state)
+    state = response_builder(state)
+    
+    return state.get("response", "Yanıt üretilemedi.")

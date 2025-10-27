@@ -30,6 +30,7 @@
 
     ws.onopen = function() {
         console.log('WebSocket bağlantısı kuruldu');
+        addMessage('assistant', 'Merhaba! Size nasıl yardımcı olabilirim?');
     };
 
     ws.onmessage = function(event) {
@@ -38,11 +39,13 @@
     };
 
     ws.onerror = function(error) {
-        alert('Bağlantı hatası: ' + error.message);
+        console.error('WebSocket hatası:', error);
+        addMessage('assistant', 'Bağlantı hatası oluştu. Lütfen sayfayı yenileyin.');
     };
 
     ws.onclose = function() {
-        alert('Bağlantı koptu. Lütfen sayfayı yenileyin.');
+        console.log('WebSocket bağlantısı kapandı');
+        addMessage('assistant', 'Bağlantı koptu. Lütfen sayfayı yenileyin.');
     };
 
     function sendMessage() {
@@ -52,6 +55,8 @@
             ws.send(message);
             inputField.value = '';
             typingIndicator.style.display = 'block';
+        } else if (ws.readyState !== WebSocket.OPEN) {
+            addMessage('assistant', 'Bağlantı kurulamadı. Lütfen sayfayı yenileyin.');
         }
     }
 
@@ -68,3 +73,4 @@
         if (e.key === 'Enter') sendMessage();
     };
 })();
+

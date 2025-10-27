@@ -40,7 +40,7 @@ async def chat_endpoint(request: dict, db: Session = Depends(get_db)):
     
     return JSONResponse(content={"response": response})
 
-@app.get("/ws")
+@app.websocket("/ws")
 async def websocket_route(websocket: WebSocket, session_id: str = "default"):
     """WebSocket endpoint."""
     await websocket_endpoint(websocket, session_id)
