@@ -1,3 +1,5 @@
+# WebSocket connection manager for real-time chat
+
 from fastapi import WebSocket, WebSocketDisconnect
 from backend.agent import run_agent
 from backend.database import SessionLocal
