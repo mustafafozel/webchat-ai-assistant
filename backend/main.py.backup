@@ -32,7 +32,7 @@ logger.info(f"ðŸ”‘ GROQ_API_KEY: {GROQ_API_KEY[:20]}..." if GROQ_API_KEY else "â
 # Ollama check - more comprehensive
 def check_ollama():
     ollama_urls = [
-        "http://172.17.0.1:11434"
+        "http://ollama:11434"
     ]
     
     for url in ollama_urls:

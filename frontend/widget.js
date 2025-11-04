@@ -1,76 +1,99 @@
-(function() {
-    // Widget container oluştur
-    const widgetContainer = document.createElement('div');
-    widgetContainer.id = 'webchat-widget';
-    widgetContainer.innerHTML = `
-        <div id="chat-header">AI Asistan</div>
-        <div id="chat-messages"></div>
-        <div id="typing-indicator" style="display:none;">Yazıyor...</div>
-        <div id="chat-input-container">
-            <input type="text" id="chat-input" placeholder="Mesajınızı yazın...">
-            <button id="send-btn">Gönder</button>
-        </div>
+(function (global) {
+  function createWidget() {
+    // Toggle button
+    const toggle = document.createElement('button');
+    toggle.id = 'webchatai-toggle';
+    toggle.innerHTML = '💬';
+    toggle.title = 'WebChat AI';
+    document.body.appendChild(toggle);
+
+    // Panel
+    const panel = document.createElement('div');
+    panel.id = 'webchatai-panel';
+    panel.innerHTML = `
+      <div class="webchatai-header">
+        <span>WebChat AI</span>
+        <button id="webchatai-close">✕</button>
+      </div>
+      <div class="webchatai-body" id="webchatai-body">
+        <div class="webchatai-msg assistant">Merhaba! Size nasıl yardımcı olabilirim?</div>
+      </div>
+      <div class="webchatai-input">
+        <input id="webchatai-input" type="text" placeholder="Mesajınızı yazın..." />
+        <button id="webchatai-send">Gönder</button>
+      </div>
     `;
-    document.body.appendChild(widgetContainer);
+    document.body.appendChild(panel);
+  }
 
-    // CSS ekle
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = '/static/widget.css';
-    document.head.appendChild(link);
+  function addMessage(type, text) {
+    const body = document.getElementById('webchatai-body');
+    const msg = document.createElement('div');
+    msg.className = 'webchatai-msg ' + type;
+    msg.textContent = text;
+    body.appendChild(msg);
+    body.scrollTop = body.scrollHeight;
+  }
 
-    // WebSocket bağlantısı
-    const sessionId = 'session_' + Math.random().toString(36).substr(2, 9);
-    const ws = new WebSocket(`ws://localhost:8000/ws?session_id=${sessionId}`);
+  async function sendMessage(apiBase, sessionId, message) {
+    try {
+      const response = await fetch(apiBase + '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, session_id: sessionId })
+      });
+      const data = await response.json();
+      return data.response || 'Yanıt alınamadı';
+    } catch (error) {
+      console.error('Error:', error);
+      return 'Bir hata oluştu';
+    }
+  }
 
-    const messagesDiv = document.getElementById('chat-messages');
-    const inputField = document.getElementById('chat-input');
-    const sendBtn = document.getElementById('send-btn');
-    const typingIndicator = document.getElementById('typing-indicator');
+  function init(options = {}) {
+    const apiBase = options.apiBase || window.location.origin;
+    const sessionId = options.sessionId || 'session-' + Math.random().toString(36).substr(2, 9);
 
-    ws.onopen = function() {
-        console.log('WebSocket bağlantısı kuruldu');
-        addMessage('assistant', 'Merhaba! Size nasıl yardımcı olabilirim?');
-    };
-
-    ws.onmessage = function(event) {
-        typingIndicator.style.display = 'none';
-        addMessage('assistant', event.data);
-    };
-
-    ws.onerror = function(error) {
-        console.error('WebSocket hatası:', error);
-        addMessage('assistant', 'Bağlantı hatası oluştu. Lütfen sayfayı yenileyin.');
-    };
-
-    ws.onclose = function() {
-        console.log('WebSocket bağlantısı kapandı');
-        addMessage('assistant', 'Bağlantı koptu. Lütfen sayfayı yenileyin.');
-    };
-
-    function sendMessage() {
-        const message = inputField.value.trim();
-        if (message && ws.readyState === WebSocket.OPEN) {
-            addMessage('user', message);
-            ws.send(message);
-            inputField.value = '';
-            typingIndicator.style.display = 'block';
-        } else if (ws.readyState !== WebSocket.OPEN) {
-            addMessage('assistant', 'Bağlantı kurulamadı. Lütfen sayfayı yenileyin.');
-        }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', createWidget);
+    } else {
+      createWidget();
     }
 
-    function addMessage(sender, content) {
-        const msgDiv = document.createElement('div');
-        msgDiv.className = `message ${sender}`;
-        msgDiv.textContent = content;
-        messagesDiv.appendChild(msgDiv);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
+    setTimeout(() => {
+      const toggle = document.getElementById('webchatai-toggle');
+      const panel = document.getElementById('webchatai-panel');
+      const closeBtn = document.getElementById('webchatai-close');
+      const input = document.getElementById('webchatai-input');
+      const sendBtn = document.getElementById('webchatai-send');
 
-    sendBtn.onclick = sendMessage;
-    inputField.onkeypress = function(e) {
-        if (e.key === 'Enter') sendMessage();
-    };
-})();
+      if (!toggle || !panel) return;
 
+      toggle.addEventListener('click', () => {
+        panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+      });
+
+      if (closeBtn) closeBtn.addEventListener('click', () => {
+        panel.style.display = 'none';
+      });
+
+      async function handleSend() {
+        const message = input.value.trim();
+        if (!message) return;
+        
+        addMessage('user', message);
+        input.value = '';
+        
+        const response = await sendMessage(apiBase, sessionId, message);
+        addMessage('assistant', response);
+      }
+
+      if (sendBtn) sendBtn.addEventListener('click', handleSend);
+      if (input) input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleSend();
+      });
+    }, 100);
+  }
+
+  global.WebChatAI = { init };
+})(window);

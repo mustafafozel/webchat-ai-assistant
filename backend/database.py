@@ -1,3 +1,4 @@
+import asyncio
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -13,3 +14,8 @@ def get_db():
         yield db
     finally:
         db.close()
+
+async def init_db():
+    """Veritabanı tablolarını oluştur"""
+    Base.metadata.create_all(bind=engine)
+    print("Database tables created successfully!")

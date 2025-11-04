@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  web:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: webchat-web
+    ports:
+      - "8000:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    volumes:
+      - .:/app
+    networks:
+      - webchat-network
+
+networks:
+  webchat-network:
+    driver: bridge

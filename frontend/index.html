@@ -3,12 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebChat AI Test</title>
+    <title>WebChat AI Demo</title>
+    <link rel="stylesheet" href="/static/widget.css">
 </head>
 <body>
-    <h1>WebChat AI Asistan Test Sayfası</h1>
-    <p>Sağ alt köşede chat widget'ını göreceksiniz.</p>
-    
+    <div style="max-width: 800px; margin: 40px auto; padding: 20px; font-family: Arial, sans-serif;">
+        <h1>🤖 WebChat AI Demo</h1>
+        <p>Sağ-alt köşedeki 💬 butonuna tıklayın ve chat'i test edin!</p>
+    </div>
+
     <script src="/static/widget.js"></script>
+    <script>
+        WebChatAI.init({
+            apiBase: window.location.origin,
+            sessionId: 'demo-' + Math.random().toString(36).substr(2, 9)
+        });
+    </script>
 </body>
 </html>
