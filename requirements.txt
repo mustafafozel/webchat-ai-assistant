@@ -2,7 +2,23 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-dotenv==1.0.0
 pydantic==2.5.0
-groq==0.4.1
 httpx==0.24.1
 requests==2.31.0
-asyncio-mqtt==0.11.0
+
+# AI Mimarisi (LangGraph)
+langchain==0.2.1
+langgraph==0.0.60
+langchain-groq==0.1.5
+langchain_community==0.2.1
+
+# Veritabanı (PostgreSQL)
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+
+# RAG (FAISS Vektör Arama)
+faiss-cpu==1.8.0
+langchain-text-splitters==0.2.0
+
+# Embeddings (HuggingFace)
+sentence-transformers==2.7.0
+langchain-postgres==0.0.8

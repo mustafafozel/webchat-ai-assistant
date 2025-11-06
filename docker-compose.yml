@@ -1,19 +1,53 @@
 version: '3.8'
 
 services:
+  # Python FastAPI Backend
   web:
     build: 
       context: .
       dockerfile: Dockerfile
     container_name: webchat-web
     ports:
-      - "8000:8000"
+      # Bilgisayarın 8001 portunu konteynerin 8000'ine bağla
+      - "8001:8000"
     environment:
+      - DATABASE_URL=${DATABASE_URL}
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - EMBEDDING_MODEL_NAME=distiluse-base-multilingual-cased-v1
+      - RAG_INDEX_PATH=./faiss_index
     volumes:
       - .:/app
     networks:
       - webchat-network
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # PostgreSQL Veritabanı
+  db:
+    image: postgres:15-alpine
+    container_name: webchat-db
+    ports:
+      # Bilgisayarın 5555 portunu konteynerin 5432'sine bağla
+      - "5555:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - webchat-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
 
 networks:
   webchat-network:

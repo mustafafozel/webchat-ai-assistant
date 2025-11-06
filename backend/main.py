@@ -1,1056 +1,156 @@
-import os
 import logging
-import random
-import re
-from datetime import datetime
-from typing import Dict, Any, List
-import httpx
-import requests
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
+from backend.database import init_db, get_db
+from backend.graph import run_agent # YENİ LANGGRAPH AGENT'İ
+from sqlalchemy.orm import Session
+from backend.models import Conversation, Message # DB Modelleri
 
+# Loglama ayarı
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="WebChat AI Assistant")
+# --- Uygulama Ömrü (Lifecycle) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Uygulama başlarken
+    logger.info("Uygulama başlıyor...")
+    logger.info("Veritabanı tabloları kontrol ediliyor/oluşturuluyor...")
+    # Veritabanı tablolarını oluştur (models.py'e göre)
+    init_db()
+    logger.info("✅ Veritabanı hazır.")
+    logger.info("✅ Uygulama başarıyla başlatıldı.")
+    yield
+    # Uygulama kapanırken
+    logger.info("Uygulama kapanıyor...")
 
+app = FastAPI(
+    title="WebChat AI Assistant (LangGraph + WebSocket)",
+    description="İş dökümanı isterlerine göre güncellenmiş mimari.",
+    lifespan=lifespan
+)
+
+# --- CORS Ayarları (Frontend'in erişebilmesi için) ---
+from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Veya frontend adresiniz
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Environment
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-logger.info(f"🔑 GROQ_API_KEY: {GROQ_API_KEY[:20]}..." if GROQ_API_KEY else "❌ GROQ_API_KEY not found")
-
-# Ollama check - more comprehensive
-def check_ollama():
-    ollama_urls = [
-        "http://172.17.0.1:11434"
-    ]
-    
-    for url in ollama_urls:
-        try:
-            resp = requests.get(f"{url}/api/version", timeout=2)
-            if resp.status_code == 200:
-                data = resp.json()
-                logger.info(f"✅ Ollama found: {url} (v{data.get('version', 'unknown')})")
-                return url
-        except Exception:
-            continue
-    
-    logger.info("❌ Ollama not accessible from container")
-    return None
-
-ollama_base_url = check_ollama()
-ollama_available = bool(ollama_base_url)
-
-# Provider selection
-groq_available = bool(GROQ_API_KEY and GROQ_API_KEY.startswith("gsk_"))
-
-if groq_available:
-    ai_provider = "groq"
-elif ollama_available:
-    ai_provider = "ollama"
-else:
-    ai_provider = "smart_fallback"
-
-logger.info(f"🤖 AI Provider: {ai_provider}")
-
-# Models
+# --- Modeller ---
 class ChatMessage(BaseModel):
     message: str
-    session_id: str = "default"
+    session_id: str
 
 class ChatResponse(BaseModel):
     response: str
     session_id: str
-    metadata: Dict[str, Any] = {}
-
-# Memory
-session_memory: Dict[str, List[Dict]] = {}
-
-# Enhanced tools
-def get_order_status(order_id: str) -> str:
-    orders = {
-        "12345": """✅ **SİPARİŞ DURUMU - KARGODA**
-
-📋 Sipariş No: 12345
-🎯 Durum: Teslimat Yolunda 🚚
-📦 Kargo: Aras Kargo
-🔗 Takip: TK789456123
-
-📍 **Güncel Konum:**
-İstanbul Dağıtım Merkezi
-Son güncelleme: 31 Ekim 21:45
-
-⏰ **Tahmini Teslimat:**
-1 Kasım Cumartesi
-Saat aralığı: 09:00 - 18:00
-
-📱 **Bilgilendirme:**
-• Teslimat öncesi SMS gelecek
-• Evde yoksa komşuya bırakılabilir
-• Acil durum: 444 0 123""",
-
-        "67890": """📦 **SİPARİŞ HAZIRLIK AŞAMASI**
-
-📋 Sipariş No: 67890
-🔄 Durum: Paketleme Tamamlandı ✅
-📍 Konum: Ana Depo - İstanbul
-
-⏰ **Kargo Programı:**
-Kargoya verme: Yarın 09:00
-Takip kodu: Yarın SMS ile gelecek
-Tahmini teslimat: 2-3 gün
-
-📞 **İletişim:**
-Soru/Sorun: 444 0 123
-Email: siparis@example.com""",
-
-        "11111": """🎉 **SİPARİŞ TESLİM EDİLDİ**
-
-📋 Sipariş No: 11111
-✅ Durum: Başarıyla Teslim Edildi
-📅 Teslimat: 31 Ekim 2025, 15:30
-👤 Teslim Alan: Müşteri (İmzalı)
-📍 Adres: Kayıtlı ev adresi
-
-🎁 **Teşekkürler!**
-⭐ Deneyiminizi değerlendirin
-🎯 5 yıldız = özel indirim kuponu
-📧 Değerlendirme linki SMS'le geldi""",
-
-        "22222": """⚠️ **SİPARİŞ BEKLEMEDE**
-
-📋 Sipariş No: 22222
-❗ Durum: Ürün Stok Kontrolü
-🔍 Süreç: Tedarikçi ile koordinasyon
-
-⏰ **Tahmini Süreç:**
-Stok kontrolü: 1-2 gün
-Güncellemeler: SMS ile bilgilendirme
-Müşteri hizmetleri arayacak: Bugün
-
-💡 **Seçenekleriniz:**
-1. Stok gelince bekle (öncelik size)
-2. Benzer ürün önerisi al
-3. Sipariş iptali - anında para iadesi
-
-📞 **Direkt İletişim:** 444 0 123""",
-
-        "33333": """❌ **SİPARİŞ SORUNLU**
-
-📋 Sipariş No: 33333
-⚠️ Durum: Teslimat Sorunu
-📍 Problem: Adres bulunamadı
-
-🔧 **Çözüm Süreci:**
-Kargo firması tekrar deneyecek
-Adres doğrulama gerekli
-Müşteri hizmetleri arayacak
-
-📞 **Acil Çözüm:**
-Telefon: 444 0 123 (7/24)
-Whatsapp: +90 555 123 45 67
-Online adres güncelleme mevcut"""
-    }
     
-    return orders.get(order_id, f"""❌ **SİPARİŞ BULUNAMADI**
-
-🔍 **Aranan Numara:** {order_id}
-❗ **Durum:** Bu sipariş numarası sistemimizde kayıtlı değil
-
-✅ **Kontrol Listesi:**
-• Sipariş numarasını doğru yazdığınızdan emin olun
-• Email kutunuzdaki onay mailini kontrol edin
-• SMS'inizdeki sipariş bilgilerini kontrol edin
-• Son 6 ay içindeki siparişler sorgulanabilir
-
-📞 **Hızlı Çözüm:**
-• Ana hat: 444 0 123 (7/24 destek)
-• Whatsapp: +90 555 123 45 67  
-• Email: siparis@example.com
-• Canlı destek: Website chat
-
-💡 **İpucu:** Email adresinizle de sorgulama yapabilirsiniz""")
-
-def calculate_shipping(city: str, weight: float = 1.0) -> str:
-    city_data = {
-        "istanbul": {"rate": 15, "zone": "A", "days": "1-2", "same_day": True},
-        "ankara": {"rate": 18, "zone": "A", "days": "1-2", "same_day": True},
-        "izmir": {"rate": 20, "zone": "A", "days": "2-3", "same_day": True},
-        "antalya": {"rate": 25, "zone": "B", "days": "2-3", "same_day": False},
-        "bursa": {"rate": 22, "zone": "B", "days": "2-3", "same_day": False},
-        "adana": {"rate": 28, "zone": "C", "days": "3-4", "same_day": False},
-        "gaziantep": {"rate": 30, "zone": "C", "days": "3-4", "same_day": False},
-        "trabzon": {"rate": 32, "zone": "D", "days": "4-5", "same_day": False}
-    }
-    
-    info = city_data.get(city.lower(), {"rate": 35, "zone": "D", "days": "4-6", "same_day": False})
-    
-    base_cost = info["rate"]
-    weight_cost = max(0, (weight - 1) * 3)  # İlk 1kg dahil
-    standard_cost = base_cost + weight_cost
-    express_cost = standard_cost + 15
-    
-    result = f"""🚚 **KARGO HESAPLAMASı - {city.upper()}**
-
-📍 **Hedef Bilgileri:**
-• Şehir: {city.title()} ({info["zone"]} Bölgesi)  
-• Paket ağırlığı: {weight} kg
-• Temel ücret: {base_cost} TL + {weight_cost} TL (ağırlık)
-
-💰 **Kargo Seçenekleri:**
-
-🚛 **Standart Kargo: {standard_cost} TL**
-• ⏰ Teslimat süresi: {info["days"]} iş günü
-• 📱 Takip: SMS + Online takip sistemi
-• 📧 Email bildirimleri otomatik
-
-⚡ **Express Kargo: {express_cost} TL**
-• ⏰ Teslimat süresi: 1 gün hızlandırma  
-• 📱 Takip: SMS + Whatsapp + Push bildirimi
-• 🔔 Canlı konum takibi"""
-
-    if info["same_day"]:
-        same_day_cost = standard_cost + 25
-        result += f"""
-
-🏃 **Aynı Gün Teslimat: {same_day_cost} TL**
-• ⏰ Teslimat süresi: 3-6 saat içinde
-• 📱 Canlı konum takibi aktif
-• ⚠️ Sınır: 14:00'a kadar verilen siparişler
-• 📞 Kurye ile direkt iletişim"""
-
-    result += f"""
-
-🎁 **Kampanya & İndirimler:**
-• 🆓 150 TL+ alışverişlerde standart kargo ücretsiz
-• 🆓 300 TL+ alışverişlerde express kargo ücretsiz
-• 👑 Premium üyelerde tüm kargolar ücretsiz
-• 🎉 İlk siparişte %50 kargo indirimi
-• 📍 Kargo noktasına teslimat: 5 TL indirim
-
-📞 **Kargo Destek:** 444 0 126 (7/24)"""
-
-    return result
-
-def get_policy_info(topic: str) -> str:
-    policies = {
-        "iade": """📋 **İADE POLİTİKASI - DETAYLI**
-
-✅ **İade Süresi:** 14 gün (yasal hak - fatura tarihinden itibaren)
-
-📦 **İade Edilebilir Ürünler:**
-• Elektronik ürünler (kutusunda, hasarsız, aksesuarları tam)
-• Giyim eşyaları (etiketli, denenmemiş, temiz)
-• Ev eşyaları (ambalajında, kullanılmamış)
-• Kitap ve medya ürünleri
-• Kozmetik ürünler (açılmamış, mühürlü)
-
-❌ **İade Edilemeyenler:**
-• Hijyen ürünleri (açılmış olanlar)
-• İç giyim eşyaları (denenmiş)
-• Özel üretim/kişiselleştirilmiş ürünler
-• Gıda maddeleri (bozulabilir)
-• Yazılım ve dijital ürünler (kullanılmış)
-
-🔄 **İade Süreci (5 Kolay Adım):**
-1. **Online İade Talebi:** Website'den "İadelerim" bölümünden talep oluştur
-2. **Onay & Kod:** Email ile iade kodu ve ücretsiz kargo etiketi al (30 dk içinde)
-3. **Paketleme:** Ürünü orijinal kutusuyla, aksesuarlarıyla birlikte hazırla
-4. **Kargo:** Ücretsiz iade etiketini yapıştır, kargoya ver
-5. **İnceleme & İade:** 2-3 iş günü inceleme, onay sonrası para iadesi
-
-💳 **Para İadesi Süreleri:**
-• **Kredi Kartı:** 2-5 iş günü (otomatik)
-• **Banka Kartı:** 1-3 iş günü
-• **Kapıda Ödeme:** Banka havalesi 1 iş günü
-• **Hediye Kartı:** Anında bakiye yükleme
-
-📞 **İade Destek Hattı:** 444 0 125 (Hafta içi 08:00-22:00)""",
-
-        "kargo": """🚚 **KARGO & TESLİMAT REHBERİ**
-
-🗺️ **Türkiye Geneli Teslimat Bölgeleri:**
-
-🅰️ **A Bölgesi (1-2 gün):** İstanbul, Ankara, İzmir
-🅱️ **B Bölgesi (2-3 gün):** Antalya, Bursa, Konya, Kayseri  
-🅲 **C Bölgesi (3-4 gün):** Adana, Samsun, Trabzon, Gaziantep
-🅳 **D Bölgesi (4-5 gün):** Doğu/Güneydoğu Anadolu illeri
-
-💰 **Kargo Ücret Tablosu:**
-• A Bölgesi: 15-20 TL • B Bölgesi: 22-28 TL
-• C Bölgesi: 28-32 TL • D Bölgesi: 32-40 TL
-• Ağırlık: İlk 1 kg dahil, sonrası her kg +3 TL
-
-⚡ **Hızlı Teslimat Seçenekleri:**
-• **Express Kargo:** +15 TL (1 gün hızlandırma)  
-• **Aynı Gün Teslimat:** +25 TL (seçili şehirler, 14:00'a kadar)
-• **Sabah Teslimat:** +10 TL (09:00-12:00 arası)
-
-🎁 **Ücretsiz Kargo Kampanyaları:**
-• 150 TL+ alışveriş: Standart kargo ücretsiz
-• 300 TL+ alışveriş: Express kargo ücretsiz
-• Premium üyelik: Tüm kargolar her zaman ücretsiz
-• İlk siparişte %50 kargo indirimi
-
-🏠 **Teslimat Seçenekleri:**
-• **Ev/İş Adresi:** Kapıya kadar teslimat (standart)
-• **Kargo Noktası:** 1500+ nokta, 5 TL indirim
-• **Komşu Teslimat:** Güvenli alternatif adres
-• **Otomat Teslim:** Seçili lokasyonlarda 24/7
-
-📱 **Takip & Bildirim Sistemi:**
-• SMS ile kargo takip kodu (otomatik)
-• Online canlı takip sistemi
-• Whatsapp bot ile kolay takip
-• Email bildirimleri (isteğe bağlı)
-• Mobil uygulama push bildirimleri
-• Teslimat öncesi kesin saat bildirimi
-
-📞 **Kargo Destek:** 444 0 126 (7/24 destek hattı)""",
-
-        "ödeme": """💳 **ÖDEME YÖNTEMLERİ & GÜVENLİK**
-
-🏦 **Kabul Edilen Kartlar:**
-• **Kredi Kartları:** Visa, Mastercard, American Express
-• **Banka Kartları:** Tüm Türk bankalarının kartları
-• **Sanal Kartlar:** İnternetbank sanal kartları
-• **Yabancı Kartlar:** 3D Secure ile güvenli ödeme
-• **Ön Ödemeli Kartlar:** Maximum, Paraf vb.
-
-📱 **Dijital Cüzdanlar:**
-• **Apple Pay** (iPhone/iPad/Mac/Apple Watch)
-• **Google Pay** (Android cihazlar)
-• **Samsung Pay** (Galaxy serisi)
-• **Garanti Pay, Akbank Mobil, İş Cep**
-
-💸 **Alternatif Ödeme Yöntemleri:**
-• **Kapıda Ödeme:** Nakit/Kart (+5 TL hizmet bedeli)
-• **Havale/EFT:** %3 indirim avantajı (hesap no otomatik)
-• **Hediye Kartları:** Sodexo, Multinet, SetCard, Ticket
-• **Kurumsal Anlaşmalar:** Özel ödeme koşulları
-
-📊 **Taksit İmkanları & Kampanyalar:**
-
-🏦 **Banka Özel Kampanyaları:**
-• **Garanti Bankası:** 12 aya kadar 0% faiz
-• **İş Bankası:** 9 aya kadar 0% faiz + bonus
-• **Akbank:** 6 aya kadar 0% faiz + axess puan  
-• **Yapı Kredi:** Dünya kart ile özel indirimler
-• **QNB Finansbank:** 3 ay 0% faiz + mil kazanımı
-
-💰 **Minimum/Maksimum Limitler:**
-• Kredi kartı: 50 TL - 50.000 TL
-• Kapıda ödeme: 100 TL - 2.000 TL
-• Havale/EFT: Limit yok
-• Hediye kartı: 25 TL - kart limiti kadar
-
-🛡️ **Güvenlik & Koruma:**
-• **256-bit SSL şifreleme** (bankacılık düzeyinde)
-• **3D Secure** zorunlu doğrulama (SMS/token)
-• **PCI DSS uyumlu** sistem sertifikası
-• **Anti-fraud** koruma sistemi 7/24 aktif
-• **İki faktörlü güvenlik** (2FA) desteği
-• **Güvenli ödeme garantisi** (MasterCard/Visa)
-
-📞 **Ödeme Destek:** 444 0 127 (7/24 teknik destek)""",
-
-        "garanti": """🛡️ **GARANTİ & SERVİS HİZMETLERİ**
-
-⚡ **Elektronik Ürün Garantileri:**
-• **Telefon/Tablet:** 2 yıl resmi distribütör garantisi
-• **Bilgisayar/Laptop:** 2 yıl + 3 yıl uzatma seçeneği
-• **Beyaz Eşya:** 2-3 yıl (markaya göre) + 10 yıl yedek parça
-• **TV/Ses Sistemi:** 2 yıl panel + 5 yıl yedek parça garantisi
-• **Küçük Ev Aletleri:** 1-2 yıl (markaya göre değişir)
-• **Oyun Konsolu:** 1 yıl + genişletilmiş garanti seçeneği
-
-👕 **Tekstil & Giyim Garantileri:**
-• **Değişim Garantisi:** 30 gün (etiketli, denenmemiş)
-• **Üretim Hatası:** Süresiz tam iade hakkı
-• **Renk Solması:** 6 ay garanti kapsamında
-• **Beden Değişimi:** 2 defa ücretsiz (aynı model)
-• **Kumaş Kalitesi:** 3 ay dokuma hatası garantisi
-
-🏠 **Ev & Mobilya Garantileri:**
-• **Mobilya:** 1 yıl yapısal garanti + 3 yıl metal aksam
-• **Dekorasyon:** 6 ay malzeme garantisi
-• **Bahçe Ürünleri:** 1 sezon (6 ay) garanti
-• **Aydınlatma:** 2 yıl garanti + LED 5 yıl
-
-🔧 **Teknik Servis Ağımız:**
-• **81 İlde** 450+ yetkili servis noktası
-• **Evde Servis:** Büyük şehirlerde ücretsiz
-• **Express Onarım:** 24-48 saat (ek ücretli)
-• **Yedek Ürün:** Onarım süresince geçici ürün
-• **Mobil Servis:** Araçla gelip onarım
-• **Online Randevu:** servistakip.com
-
-📋 **Garanti Kapsamı:**
-• Üretim hataları (malzeme, işçilik)
-• Erken arızalanma (normal kullanımda)
-• Performans düşüklüğü (spesifikasyon altı)
-• Orijinal yedek parça garantisi
-• Yazılım güncellemeleri (2 yıl)
-
-❌ **Garanti Kapsamı Dışında:**
-• Kullanıcı kaynaklı hasar (düşürme, darbe)
-• Su/nem teması (banyo, yağmur vb.)
-• Yetkisiz tamircide onarım girişimi
-• Elektrik problemi kaynaklı arıza
-• Yanlış kullanım sonucu hasar
-• Doğal afet/kaza sonucu hasar
-
-📞 **Garanti Destek Hatları:**
-• **Genel garanti bilgi:** 444 0 124
-• **Teknik destek hattı:** 444 0 129
-• **Servis randevu:** 444 0 130
-• **Yedek parça sipariş:** 444 0 131
-
-🌐 **Online Garanti Hizmetleri:**
-• **garantisor.com** - Garanti durumu sorgulama
-• **servistakip.com** - Onarım süreç takibi  
-• **yedekparca.com** - Online parça siparişi
-• **Mobil uygulama** - QR kod ile hızlı erişim"""
-    }
-    
-    return policies.get(topic.lower(), f"""❓ **'{topic.title()}' Konusunda Bilgi**
-
-Bu konuda size daha detaylı bilgi vermek için:
-
-📞 **Müşteri Hizmetleri Hatları:**
-• **Ana hat:** 444 0 123 (7/24 genel destek)
-• **Sipariş & İade:** 444 0 125  
-• **Kargo & Teslimat:** 444 0 126
-• **Ödeme & Fatura:** 444 0 127
-• **Garanti & Servis:** 444 0 124
-
-💬 **Diğer İletişim Kanalları:**
-• **Whatsapp destek:** +90 555 123 45 67
-• **Canlı destek:** Website chat (09:00-22:00)
-• **Email destek:** bilgi@example.com
-• **Social media:** @ExampleTurkiye (Twitter, Instagram)
-• **Video görüşme:** Uzman ile görüntülü destek
-
-⏰ **Destek Saatleri:**
-• **Hafta içi:** 08:00 - 22:00 (tam destek)
-• **Hafta sonu:** 09:00 - 19:00 (sınırlı destek)  
-• **Resmi tatiller:** 10:00 - 18:00 (acil durumlar)
-• **7/24 Hattı:** 444 0 123 (otomatik sistem + acil)""")
-
-def analyze_intent(message: str) -> Dict[str, Any]:
-    message_lower = message.lower()
-    
-    # Sipariş takibi - geliştirilmiş
-    order_patterns = [
-        r'(\d{4,8})\s*(?:nolu|numaralı|no\.?)\s*(?:sipariş|order)',
-        r'(?:sipariş|order)\s*(?:no|numarası)?:?\s*(\d{4,8})',
-        r'(\d{4,8})\s*(?:takip|track|nerede|where)',
-        r'(\d{4,8}).*(?:durum|status)'
-    ]
-    
-    for pattern in order_patterns:
-        match = re.search(pattern, message_lower)
-        if match:
-            return {"intent": "sipariş_takip", "parameters": {"order_id": match.group(1)}, "requires_tool": True}
-    
-    # Kargo hesaplama
-    cities = ['istanbul', 'ankara', 'izmir', 'antalya', 'bursa', 'adana', 'gaziantep', 'trabzon']
-    found_city = next((city for city in cities if city in message_lower), None)
-    
-    weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:kg|kilo)', message_lower)
-    weight = float(weight_match.group(1).replace(",", ".")) if weight_match else 1.0
-    
-    if found_city and any(word in message_lower for word in ['kargo', 'ücret', 'fiyat', 'maliyet', 'gönderi']):
-        return {"intent": "kargo_hesaplama", "parameters": {"city": found_city, "weight": weight}, "requires_tool": True}
-    
-    # Politika sorguları
-    policy_keywords = {
-        "iade": ["iade", "geri", "döndür", "değiş", "return"],
-        "kargo": ["kargo", "teslimat", "gönderi", "delivery", "courier"],
-        "ödeme": ["ödeme", "para", "kart", "payment", "taksit"],
-        "garanti": ["garanti", "warranty", "bozuk", "arıza", "servis"]
-    }
-    
-    for topic, keywords in policy_keywords.items():
-        if any(keyword in message_lower for keyword in keywords):
-            return {"intent": "politika_sorgula", "parameters": {"topic": topic}, "requires_tool": True}
-    
-    return {"intent": "genel_sohbet", "parameters": {}, "requires_tool": False}
-
-# UPDATED Groq API with current models
-async def call_groq_api(messages: List[Dict]) -> str:
-    try:
-        # Groq'un aktif modelleri (2024-2025)
-        models = [
-            "llama-3.1-70b-versatile",  # En güçlü
-            "llama-3.1-8b-instant",    # Hızlı
-            "mixtral-8x7b-32768",      # Uzun context
-            "llama3-70b-8192",         # Stabil
-            "llama3-8b-8192"           # Hızlı (eski)
-        ]
-        
-        # Try different models in order
-        for model in models:
-            try:
-                clean_messages = []
-                for msg in messages:
-                    if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
-                        content = str(msg['content']).strip()
-                        if content and len(content) < 3000:
-                            clean_messages.append({"role": msg['role'], "content": content})
-                
-                if not clean_messages:
-                    raise Exception("No valid messages")
-                
-                payload = {
-                    "model": model,
-                    "messages": clean_messages,
-                    "max_tokens": 350,
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                    "stream": False
-                }
-                
-                headers = {
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json"
-                }
-                
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    response = await client.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        json=payload,
-                        headers=headers
-                    )
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        if 'choices' in data and data['choices']:
-                            result = data['choices'][0]['message']['content'].strip()
-                            logger.info(f"Groq success with model: {model}")
-                            return result
-                        else:
-                            continue
-                    elif response.status_code == 400:
-                        error_data = response.json()
-                        if "decommissioned" in str(error_data):
-                            logger.warning(f"Model {model} decommissioned, trying next...")
-                            continue
-                        else:
-                            raise Exception(f"Groq API error: {error_data}")
-                    else:
-                        continue
-                        
-            except Exception as e:
-                logger.warning(f"Model {model} failed: {e}")
-                continue
-        
-        raise Exception("All Groq models failed")
-        
-    except Exception as e:
-        logger.error(f"Groq call completely failed: {e}")
-        raise e
-
-# Ollama API (unchanged)
-async def call_ollama_api(messages: List[Dict]) -> str:
-    try:
-        if not ollama_base_url:
-            raise Exception("Ollama not available")
-        
-        prompt_parts = []
-        for msg in messages:
-            role = msg.get('role', 'user')
-            content = str(msg.get('content', '')).strip()
-            if content:
-                if role == 'system':
-                    prompt_parts.append(f"Sistem: {content}")
-                elif role == 'user':
-                    prompt_parts.append(f"Kullanıcı: {content}")
-                elif role == 'assistant':
-                    prompt_parts.append(f"Asistan: {content}")
-        
-        prompt = "\n".join(prompt_parts) + "\nAsistan:"
-        
-        payload = {
-            "model": "llama3.2",
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.7, "num_predict": 250}
-        }
-        
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(f"{ollama_base_url}/api/generate", json=payload)
-            
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("response", "").strip()
-            else:
-                raise Exception(f"Ollama error: {response.status_code}")
-                
-    except Exception as e:
-        logger.error(f"Ollama call failed: {e}")
-        raise e
-
-def smart_fallback(message: str) -> str:
-    message_lower = message.lower()
-    
-    # Quick responses
-    quick_responses = {
-        "merhaba": ["🙋‍♂️ Merhaba! Size nasıl yardımcı olabilirim?", "👋 Selam! Bugün size nasıl destek olabilirim?"],
-        "günaydın": ["🌅 Günaydın! İyi günler, size nasıl yardımcı olabilirim?"],
-        "iyi akşam": ["🌆 İyi akşamlar! Size nasıl destek olabilirim?"],
-        "nasıl": ["😊 Ben bir AI asistanıyım, sürekli öğreniyorum! Size nasıl yardımcı olabilirim?"],
-        "teşekkür": ["🙏 Rica ederim! Başka sorunuz var mı?", "😊 Ne demek! Size daha nasıl yardımcı olabilirim?"],
-        "bye": ["👋 Görüşürüz! İyi günler dilerim!", "🙋‍♂️ Hoşça kalın! Tekrar görüşmek üzere!"]
-    }
-    
-    for key, responses in quick_responses.items():
-        if key in message_lower:
-            return random.choice(responses)
-    
-    # Help requests
-    if any(word in message_lower for word in ["yardım", "help", "destek", "neler yapabilir"]):
-        return """🆘 **YARDIM MENÜSÜ**
-
-✅ **Size Yardımcı Olabileceğim Konular:**
-
-🛍️ **Sipariş Takibi**
-"12345 numaralı siparişim nerede?"
-"67890 siparişimin durumu ne?"
-
-📦 **Kargo Hesaplama** 
-"İstanbul'a 2kg kargo ne kadar?"
-"Ankara'ya express kargo ücreti?"
-
-📋 **Politika Bilgileri**
-"İade nasıl yaparım?" 
-"Hangi kartları kabul ediyorsunuz?"
-"Garanti süresi ne kadar?"
-
-💬 **Genel Sorular**
-"Müşteri hizmetleri numarası?"
-"Çalışma saatleri nedir?"
-
-Hangi konuda yardım istersiniz? 😊"""
-    
-    # Contextual responses
-    response_templates = [
-        f"'{message}' konusunda size yardımcı olmaya çalışayım. Bu konuda daha spesifik ne öğrenmek istiyorsunuz? 🤔",
-        f"Anlıyorum, '{message}' hakkında bilgi arıyorsunuz. Size nasıl destek olabilirim? 💭",
-        f"'{message}' ile ilgili sorunuz için buradayım. Detayına inelim mi? 🔍"
-    ]
-    
-    return random.choice(response_templates)
-
-async def generate_response(message: str, session_id: str, tool_result: str = None) -> str:
-    if tool_result:
-        return f"İşte istediğiniz bilgiler:\n\n{tool_result}"
-    
-    history = session_memory.get(session_id, [])
-    
-    # Try AI providers in order
-    try:
-        if ai_provider == "groq" and groq_available:
-            try:
-                messages = [
-                    {"role": "system", "content": "Sen profesyonel bir müşteri hizmetleri asistanısın. Türkçe konuşuyorsun, samimi ama profesyonelsin. Kısa ve net yanıtlar veriyorsun."}
-                ]
-                
-                # Add recent history (max 2)
-                for msg in history[-2:]:
-                    if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
-                        messages.append(msg)
-                
-                messages.append({"role": "user", "content": message})
-                
-                response = await call_groq_api(messages)
-                provider_used = "groq"
-                
-            except Exception as e:
-                logger.warning(f"Groq failed, trying Ollama: {e}")
-                if ollama_available:
-                    messages = [
-                        {"role": "system", "content": "Sen müşteri hizmetleri asistanısın."},
-                        {"role": "user", "content": message}
-                    ]
-                    response = await call_ollama_api(messages)
-                    provider_used = "ollama"
-                else:
-                    response = smart_fallback(message)
-                    provider_used = "smart_fallback"
-                    
-        elif ai_provider == "ollama" and ollama_available:
-            messages = [
-                {"role": "system", "content": "Sen müşteri hizmetleri asistanısın."},
-                {"role": "user", "content": message}
-            ]
-            response = await call_ollama_api(messages)
-            provider_used = "ollama"
-        else:
-            response = smart_fallback(message)
-            provider_used = "smart_fallback"
-        
-        # Update memory
-        if session_id not in session_memory:
-            session_memory[session_id] = []
-        
-        session_memory[session_id].extend([
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": response}
-        ])
-        
-        if len(session_memory[session_id]) > 8:
-            session_memory[session_id] = session_memory[session_id][-8:]
-        
-        logger.info(f"Response by: {provider_used}")
-        return response
-        
-    except Exception as e:
-        logger.error(f"All providers failed: {e}")
-        return smart_fallback(message)
-
-# Endpoints
-@app.get("/")
-def read_root():
-    return {
-        "message": "WebChat AI Assistant",
-        "ai_provider": ai_provider,
-        "groq_available": groq_available,
-        "ollama_available": ollama_available,
-        "timestamp": datetime.now().isoformat()
-    }
+class Metrics(BaseModel):
+    total_conversations: int
+    total_messages: int
+
+# --- WebSocket Bağlantı Yöneticisi ---
+# (backend/websocket.py yerine direkt main.py içinde yönetelim)
+class ConnectionManager:
+    def __init__(self):
+        # Aktif bağlantıları session_id ile sakla
+        self.active_connections: dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str):
+        await websocket.accept()
+        self.active_connections[session_id] = websocket
+        logger.info(f"WebSocket bağlandı: {session_id}")
+
+    def disconnect(self, session_id: str):
+        if session_id in self.active_connections:
+            del self.active_connections[session_id]
+            logger.info(f"WebSocket bağlantısı kesildi: {session_id}")
+
+    async def send_message(self, message: str, session_id: str):
+        websocket = self.active_connections.get(session_id)
+        if websocket:
+            await websocket.send_text(message)
+
+manager = ConnectionManager()
+
+# --- API ENDPOINTS (İş Dökümanı İsterleri) ---
 
 @app.get("/api/health")
 def health_check():
-    return {
-        "status": "healthy",
-        "ai_provider": ai_provider,
-        "providers": {
-            "groq": {"available": groq_available, "models": ["llama-3.1-70b-versatile", "llama-3.1-8b-instant"]},
-            "ollama": {"available": ollama_available, "model": "llama3.2"},
-            "smart_fallback": {"available": True, "model": "rule-based"}
-        }
-    }
+    """İş Dökümanı İsteri: GET /api/health - Sağlık kontrolü"""
+    return {"status": "healthy", "architecture": "LangGraph_WebSocket_PostgreSQL"}
 
-@app.get("/demo", response_class=HTMLResponse)
-def demo():
-    provider_names = {
-        "groq": "🚀 Groq AI (Updated)",
-        "ollama": "🏠 Ollama Local", 
-        "smart_fallback": "🧠 Smart Fallback"
-    }
-    
-    status_color = "#00d4aa" if ai_provider == "groq" else "#1976d2" if ai_provider == "ollama" else "#ff9800"
-    
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <title>WebChat AI Assistant</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ 
-            font-family: system-ui, sans-serif; 
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            min-height: 100vh; padding: 20px;
-        }}
-        .container {{
-            max-width: 1000px; margin: 0 auto; background: white;
-            padding: 40px; border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.15);
-        }}
-        h1 {{ color: #1f6feb; text-align: center; font-size: 2.8em; margin-bottom: 20px; }}
-        .provider-badge {{ 
-            background: {status_color}; color: white; padding: 12px 25px; 
-            border-radius: 25px; font-weight: bold; display: inline-block; margin-bottom: 30px;
-        }}
-        
-        #webchatai-toggle {{
-            position: fixed; right: 25px; bottom: 25px;
-            width: 70px; height: 70px; border-radius: 50%;
-            background: linear-gradient(45deg, #1f6feb, #4f46e5);
-            color: white; border: none; cursor: pointer; z-index: 999999;
-            font-size: 30px; box-shadow: 0 10px 30px rgba(31,111,235,0.4);
-            transition: all 0.3s ease;
-        }}
-        #webchatai-toggle:hover {{ transform: scale(1.1); }}
-        
-        #webchatai-panel {{
-            position: fixed; right: 25px; bottom: 105px;
-            width: 380px; height: 550px; background: white;
-            border-radius: 20px; display: none; flex-direction: column;
-            z-index: 999998; box-shadow: 0 25px 60px rgba(0,0,0,0.2);
-            animation: slideUp 0.4s ease;
-        }}
-        @keyframes slideUp {{ from {{ opacity: 0; transform: translateY(20px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-        
-        .header {{ 
-            background: linear-gradient(135deg, #1f6feb, #0d47a1);
-            color: white; padding: 20px; border-radius: 20px 20px 0 0;
-            display: flex; justify-content: space-between; align-items: center;
-        }}
-        .provider-info {{ font-size: 11px; background: rgba(255,255,255,0.2); padding: 3px 8px; border-radius: 10px; }}
-        .close-btn {{ background: transparent; border: none; color: white; cursor: pointer; font-size: 24px; }}
-        
-        .body {{ flex: 1; padding: 20px; overflow-y: auto; background: #f8fafc; }}
-        .input {{ 
-            display: flex; padding: 20px; gap: 12px; background: white;
-            border-top: 1px solid #e2e8f0;
-        }}
-        .input input {{ 
-            flex: 1; padding: 14px 18px; border: 2px solid #e2e8f0;
-            border-radius: 25px; outline: none;
-        }}
-        .input input:focus {{ border-color: #1f6feb; }}
-        .input button {{ 
-            padding: 14px 24px; background: linear-gradient(45deg, #1f6feb, #4f46e5);
-            color: white; border: none; border-radius: 25px; cursor: pointer; font-weight: 600;
-        }}
-        
-        .msg {{ 
-            margin: 15px 0; padding: 15px 20px; border-radius: 20px;
-            max-width: 85%; word-wrap: break-word; line-height: 1.4;
-            animation: fadeIn 0.3s ease;
-        }}
-        @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-        
-        .user {{ 
-            background: linear-gradient(135deg, #1f6feb, #4f46e5);
-            color: white; margin-left: auto; text-align: right;
-        }}
-        .assistant {{ background: white; color: #374151; border: 2px solid #e2e8f0; }}
-        .typing {{ 
-            background: white; color: #6b7280; font-style: italic;
-            border: 2px solid #e2e8f0; animation: pulse 1.5s infinite;
-        }}
-        @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.6; }} }}
-        
-        .info-grid {{ 
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
-            gap: 20px; margin: 30px 0; 
-        }}
-        .info-card {{
-            background: white; padding: 25px; border-radius: 15px;
-            border-left: 4px solid #1f6feb; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }}
-        .info-card h4 {{ color: #1f6feb; margin-bottom: 10px; }}
-        
-        .status-info {{
-            background: #f0f9ff; padding: 25px; border-radius: 15px; 
-            margin: 25px 0; border-left: 5px solid #1f6feb;
-        }}
-        
-        @media (max-width: 480px) {{
-            #webchatai-panel {{ right: 15px; left: 15px; width: auto; }}
-            .container {{ padding: 25px; }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="provider-badge">{provider_names[ai_provider]}</div>
-        <h1>WebChat AI Assistant</h1>
-        
-        <div class="status-info">
-            <h3>🎯 Güncellenmiş AI Chat Widget</h3>
-            <p><strong>Sağ-alt köşedeki AI butonuna tıklayın!</strong></p>
-            <p>Aktif sistem: <strong>{provider_names[ai_provider]}</strong></p>
-            {'<p style="color: #10b981;"><strong>✅ Groq models updated - working!</strong></p>' if ai_provider == 'groq' else ''}
-        </div>
-        
-        <div class="info-grid">
-            <div class="info-card">
-                <h4>🚀 Groq Cloud</h4>
-                <p>Status: {'✅ Active (Updated Models)' if ai_provider == 'groq' else '❌ API Issue' if groq_available else '⚠️ API Key Missing'}</p>
-                <small>Models: llama-3.1-70b, llama-3.1-8b</small>
-            </div>
-            <div class="info-card">
-                <h4>🏠 Ollama Local</h4>
-                <p>Status: {'✅ Active' if ai_provider == 'ollama' else '⚡ Standby' if ollama_available else '❌ Not Available'}</p>
-                <small>Model: llama3.2</small>
-            </div>
-            <div class="info-card">
-                <h4>🧠 Smart Fallback</h4>
-                <p>Status: {'✅ Active' if ai_provider == 'smart_fallback' else '⚡ Standby'}</p>
-                <small>Rule-based responses</small>
-            </div>
-        </div>
-        
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin: 30px 0;">
-            <div style="background: #f8fafc; padding: 20px; border-radius: 10px;">
-                <h4>🛍️ Sipariş Takibi</h4>
-                <p>"12345 numaralı siparişim nerede?"</p>
-            </div>
-            <div style="background: #f8fafc; padding: 20px; border-radius: 10px;">
-                <h4>📦 Kargo Hesaplama</h4>
-                <p>"İstanbul'a 2kg kargo ne kadar?"</p>
-            </div>
-            <div style="background: #f8fafc; padding: 20px; border-radius: 10px;">
-                <h4>📋 Politika Sorgusu</h4>
-                <p>"İade nasıl yaparım?"</p>
-            </div>
-            <div style="background: #f8fafc; padding: 20px; border-radius: 10px;">
-                <h4>💬 AI Sohbet</h4>
-                <p>"Merhaba, nasılsın?"</p>
-            </div>
-        </div>
-    </div>
-    
-    <button id="webchatai-toggle">🤖</button>
-    <div id="webchatai-panel">
-        <div class="header">
-            <div>
-                <h3>WebChat AI</h3>
-                <div class="provider-info">{ai_provider.upper()}</div>
-            </div>
-            <button class="close-btn" onclick="closeChat()">✕</button>
-        </div>
-        <div class="body" id="chat-body">
-            <div class="msg assistant">🤖 Merhaba! Ben güncellenmiş AI asistanıyım.</div>
-            <div class="msg assistant">✨ Size nasıl yardımcı olabilirim?</div>
-        </div>
-        <div class="input">
-            <input id="chat-input" placeholder="Mesajınızı yazın..." />
-            <button onclick="sendMessage()">Gönder</button>
-        </div>
-    </div>
-    
-    <script>
-        const sessionId = 'updated-' + Math.random().toString(36).substr(2, 9);
-        let isOpen = false;
-        
-        document.getElementById('webchatai-toggle').onclick = function() {{
-            const panel = document.getElementById('webchatai-panel');
-            isOpen = !isOpen;
-            panel.style.display = isOpen ? 'flex' : 'none';
-            if (isOpen) document.getElementById('chat-input').focus();
-        }};
-        
-        function closeChat() {{
-            document.getElementById('webchatai-panel').style.display = 'none';
-            isOpen = false;
-        }}
-        
-        function addMessage(type, text) {{
-            const body = document.getElementById('chat-body');
-            const div = document.createElement('div');
-            div.className = 'msg ' + type;
-            div.innerHTML = text.replace(/\\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            body.appendChild(div);
-            body.scrollTop = body.scrollHeight;
-        }}
-        
-        function showTyping() {{
-            const body = document.getElementById('chat-body');
-            const div = document.createElement('div');
-            div.className = 'msg typing';
-            div.id = 'typing-indicator';
-            div.textContent = '🤖 Yanıtlıyor...';
-            body.appendChild(div);
-            body.scrollTop = body.scrollHeight;
-        }}
-        
-        function removeTyping() {{
-            const typing = document.getElementById('typing-indicator');
-            if (typing) typing.remove();
-        }}
-        
-        async function sendMessage() {{
-            const input = document.getElementById('chat-input');
-            const message = input.value.trim();
-            if (!message) return;
-            
-            addMessage('user', message);
-            input.value = '';
-            showTyping();
-            
-            try {{
-                const response = await fetch('/api/chat', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ message, session_id: sessionId }})
-                }});
-                
-                const data = await response.json();
-                
-                setTimeout(() => {{
-                    removeTyping();
-                    addMessage('assistant', data.response || 'Yanıt alınamadı');
-                    console.log('Provider:', '{ai_provider}', data.metadata);
-                }}, 1000);
-                
-            }} catch (error) {{
-                setTimeout(() => {{
-                    removeTyping();
-                    addMessage('assistant', '❌ Bağlantı hatası.');
-                }}, 500);
-            }}
-        }}
-        
-        document.getElementById('chat-input').addEventListener('keydown', function(e) {{
-            if (e.key === 'Enter') sendMessage();
-        }});
-        
-        console.log('🤖 Updated WebChat ready! Provider: {ai_provider}');
-    </script>
-</body>
-</html>'''
-
-@app.post("/api/chat")
-async def chat_endpoint(chat_message: ChatMessage) -> ChatResponse:
-    message = chat_message.message
-    session_id = chat_message.session_id
-    
-    logger.info(f"Chat: {message[:30]}... [{ai_provider}]")
-    
+@app.get("/api/metrics", response_model=Metrics)
+def get_metrics(db: Session = Depends(get_db)):
+    """İş Dökümanı İsteri: GET /api/metrics - Basit metrikler"""
     try:
-        # Intent analysis
-        intent_data = analyze_intent(message)
-        
-        # Tool calling
-        tool_result = None
-        if intent_data.get("requires_tool"):
-            params = intent_data.get("parameters", {})
-            intent = intent_data.get("intent")
-            
-            if intent == "sipariş_takip":
-                tool_result = get_order_status(params.get("order_id", ""))
-            elif intent == "kargo_hesaplama":
-                tool_result = calculate_shipping(params.get("city", ""), params.get("weight", 1.0))
-            elif intent == "politika_sorgula":
-                tool_result = get_policy_info(params.get("topic", ""))
-        
-        # Generate response
-        response = await generate_response(message, session_id, tool_result)
-        
-        return ChatResponse(
-            response=response,
-            session_id=session_id,
-            metadata={
-                "intent": intent_data.get("intent"),
-                "tool_used": bool(tool_result),
-                "ai_provider": ai_provider
-            }
-        )
-        
+        total_conv = db.query(Conversation).count()
+        total_msg = db.query(Message).count()
+        return {"total_conversations": total_conv, "total_messages": total_msg}
     except Exception as e:
-        logger.error(f"Chat error: {e}")
-        return ChatResponse(
-            response="❌ Üzgünüm, sorun yaşıyorum. Tekrar deneyin.",
-            session_id=session_id,
-            metadata={"error": str(e)}
-        )
+        logger.error(f"Metrik alınırken hata: {e}")
+        return {"total_conversations": -1, "total_messages": -1}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_http_fallback(chat_message: ChatMessage):
+    """
+    İş Dökümanı İsteri: POST /api/chat
+    WebSocket çalışmazsa diye HTTP fallback endpoint'i.
+    """
+    logger.info(f"HTTP Chat (Fallback) alındı: {chat_message.session_id}")
+    
+    # Agent'i çalıştır (LangGraph + DB Memory)
+    response_text = run_agent(chat_message.session_id, chat_message.message)
+    
+    return ChatResponse(response=response_text, session_id=chat_message.session_id)
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    """
+    İş Dökümanı İsteri: GET /ws?session_id=
+    Gerçek zamanlı mesajlaşma için WebSocket endpoint'i.
+    """
+    await manager.connect(websocket, session_id)
+    try:
+        while True:
+            # Kullanıcıdan mesaj bekle
+            data = await websocket.receive_text()
+            
+            logger.info(f"WebSocket Mesaj alındı: {session_id} -> {data}")
+            
+            # "yazıyor..." göstergesi için ara mesaj
+            await manager.send_message("Asistan yazıyor...", session_id)
+            
+            # Agent'i çalıştır (LangGraph + DB Memory)
+            response_text = run_agent(session_id, data)
+            
+            # AI yanıtını kullanıcıya gönder
+            await manager.send_message(response_text, session_id)
+            
+    except WebSocketDisconnect:
+        manager.disconnect(session_id)
+    except Exception as e:
+        logger.error(f"WebSocket Hatası ({session_id}): {e}")
+        await manager.send_message(f"Hata oluştu: {e}", session_id)
+        manager.disconnect(session_id)
+
+# --- Demo Arayüz (Test için) ---
+@app.get("/", response_class=HTMLResponse)
+def get_demo_page(request: Request):
+    """
+    Localhost'ta test etmek için basit demo sayfası.
+    Bu, frontend/index.html'e benzer ama WebSocket'i test eder.
+    """
+    # frontend/index.html dosyasını okuyup döndür
+    try:
+        with open("frontend/index.html", "r", encoding="utf-8") as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Demo dosyası (frontend/index.html) bulunamadı.</h1>")
