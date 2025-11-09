@@ -1,32 +1,27 @@
-from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from backend.config import settings
 
-# Veritabanı bağlantı motorunu oluştur
-# 'check_same_thread' SQLite içindir, PostgreSQL için kaldıralım.
-engine = create_engine(settings.DATABASE_URL)
+# Asenkron SQLAlchemy motoru oluştur
+engine = create_async_engine(settings.DATABASE_URL, echo=False, future=True)
 
-# Veritabanı oturumu (session) oluşturucu
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Asenkron session factory
+async_session = sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
-# Modellerimizin miras alacağı temel sınıf
+# ORM modelleri için Base sınıfı
 Base = declarative_base()
 
-def get_db():
-    """FastAPI Dependencies için veritabanı oturumu sağlar"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Veritabanı tablolarını oluşturmak için asenkron başlatıcı
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
-def init_db():
-    """
-    Uygulama başladığında veritabanı tablolarını oluşturur.
-    (Bu, main.py içinden çağrılacak)
-    """
-    try:
-        Base.metadata.create_all(bind=engine)
-        print("Veritabanı tabloları başarıyla oluşturuldu.")
-    except Exception as e:
-        print(f"Veritabanı tabloları oluşturulurken hata: {e}")
+# Session sağlayıcı (Dependency Injection)
+async def get_db():
+    async with async_session() as session:
+        yield session
+

@@ -1,12 +1,14 @@
+import json
+import uuid
 import os
 from typing import TypedDict, Annotated, List, Literal
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlalchemy import SqlAlchemyCheckpoint
+from langgraph_community.checkpoints.sqlalchemy import SqlAlchemyCheckpoint
 from sqlalchemy.orm import sessionmaker
 from backend.database import engine
 from backend.config import settings
@@ -98,7 +100,7 @@ def intent_router_node(state: AgentState):
     """
     print("--- NODE: Intent Router ---")
     last_message = state['messages'][-1].content
-    
+
     # Çok basit bir yönlendirme
     if "sipariş" in last_message or "kargo hesapla" in last_message:
         print("Karar: Tool Çağrısı")
@@ -120,19 +122,19 @@ def tool_caller_node(state: AgentState):
     tool_call = state['messages'][-1].tool_calls[0]
     tool_name = tool_call['name']
     tool_args = tool_call['args']
-    
+
     selected_tool = None
     for tool in tools:
         if tool.name == tool_name:
             selected_tool = tool
             break
-    
+
     if selected_tool:
         result = selected_tool.invoke(tool_args)
         state['messages'].append(ToolMessage(content=result, tool_call_id=tool_call['id']))
     else:
         state['messages'].append(ToolMessage(content="Hata: Araç bulunamadı.", tool_call_id=tool_call['id']))
-        
+
     state['next'] = "response_builder"
     return state
 
@@ -153,10 +155,10 @@ def retriever_node(state: AgentState):
         result = f"Bilgi bankasından bulunan ilgili içerik:\n{context}"
 
     # RAG sonucunu ToolMessage olarak ekle (LLM'in bunu context olarak kullanması için)
-    # 'policy_lookup' tool'u çağrılmış gibi davranıyoruz
+    # 'policy_lookup' tool'u çağırılmış gibi davranıyoruz
     fake_tool_call_id = f"tool_{uuid.uuid4()}"
     state['messages'].append(ToolMessage(content=result, tool_call_id=fake_tool_call_id))
-    
+
     state['next'] = "response_builder"
     return state
 
@@ -173,13 +175,13 @@ def response_builder_node(state: AgentState):
         "o bilgiyi kullanarak yanıt ver. "
         "Sana 'tool_result' verilirse, o JSON sonucunu kullanıcıya güzel bir cümle ile açıkla."
     )
-    
+
     # State'deki mesajların başına system prompt'u ekle
     messages_with_system_prompt = [SystemMessage(content=system_prompt)] + state['messages']
-    
+
     # LLM'i çağır
     response = llm_with_tools.invoke(messages_with_system_prompt)
-    
+
     # LLM'in yanıtını state'e ekle
     state['messages'].append(response)
     state['next'] = END # Akış sonlandı
@@ -232,18 +234,18 @@ def run_agent(session_id: str, user_input: str) -> str:
 
     # Konuşma ID'si (thread_id)
     config = {"configurable": {"thread_id": session_id}}
-    
+
     # Mesajı bir listeye koy (graph 'messages' listesi bekler)
     input_messages = [HumanMessage(content=user_input)]
-    
+
     try:
         # Agent'i çalıştır
         # 'stream' yerine 'invoke' kullanarak son yanıtı direkt al
         final_state = graph_app.invoke({"messages": input_messages}, config=config)
-        
+
         # Son mesaj (AI yanıtı)
         response_message = final_state['messages'][-1].content
-        
+
         # PostgreSQL'e manuel kayıt (LangGraph checkpoint bazen gecikebilir)
         # Memory Manager (İş Dökümanı İsteri) - checkpoint'e ek olarak
         try:
@@ -255,7 +257,7 @@ def run_agent(session_id: str, user_input: str) -> str:
                 db.add(conversation)
                 db.commit()
                 db.refresh(conversation)
-            
+
             # Kullanıcı mesajını kaydet
             db.add(MessageModel(conversation_id=conversation.id, sender="user", content=user_input))
             # AI mesajını kaydet
@@ -266,9 +268,9 @@ def run_agent(session_id: str, user_input: str) -> str:
             print(f"UYARI: PostgreSQL'e manuel kayıt başarısız: {db_e}")
         finally:
             db.close()
-            
+
         return response_message
-        
+
     except Exception as e:
         print(f"HATA: Agent çalıştırılırken hata oluştu: {e}")
         return "Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin."

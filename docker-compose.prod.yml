@@ -1,0 +1,41 @@
+version: '3.9'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webchat-web
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - webchat_net
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    container_name: webchat-db
+    environment:
+      POSTGRES_USER: webchat_user
+      POSTGRES_PASSWORD: webchat_password
+      POSTGRES_DB: webchat_ai
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5557:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webchat_user"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pg_data:
+
+networks:
+  webchat_net:
+    driver: bridge

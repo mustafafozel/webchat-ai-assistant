@@ -1,19 +1,23 @@
-import os
-from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
 
-# .env dosyasındaki değişkenleri yükle
-load_dotenv()
+class Settings(BaseSettings):
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_HOST: str = "db"
+    POSTGRES_PORT: int = 5432
+    GROQ_API_KEY: str
 
-class Settings:
-    # Veritabanı
-    DATABASE_URL = os.getenv("DATABASE_URL")
-    
-    # AI Ayarları
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "distiluse-base-multilingual-cased-v1")
-    
-    # RAG Ayarları
-    RAG_INDEX_PATH = os.getenv("RAG_INDEX_PATH", "./faiss_index")
-    KNOWLEDGE_BASE_FILE = os.getenv("KNOWLEDGE_BASE_FILE", "knowledge/kb.json")
+    @property
+    def DATABASE_URL(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
+
+    class Config:
+        env_file = ".env"
+
 
 settings = Settings()
+
