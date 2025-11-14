@@ -1,6 +1,59 @@
+<<<<<<< HEAD
 .env
 __pycache__/
 *.pyc
 logs/
 data/
 vector_store/
+=======
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# Environment
+.env
+*.env
+!.env.example
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/faiss_index/
+postgres_data/
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Temporary
+*.tmp
+*.bak
+*.old
+/tmp/
+>>>>>>> 65eb5aa (feat: major update - LangGraph ReAct agent implementation)

@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 from langchain.embeddings import HuggingFaceEmbeddings
+=======
+from langchain_huggingface import HuggingFaceEmbeddings
+>>>>>>> 65eb5aa (feat: major update - LangGraph ReAct agent implementation)
 from langchain.vectorstores import FAISS
 from backend.config import settings
 import pickle

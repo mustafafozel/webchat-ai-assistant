@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ======================
 # 1. BASE (Builder) aşaması
 # ======================
@@ -40,5 +41,51 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 EXPOSE 8000
 
 # Uygulama çalıştırma
+=======
+# === Builder Stage ===
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Sistem bağımlılıkları (PostgreSQL için)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python bağımlılıkları
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --no-cache-dir -r requirements.txt
+
+# === Runtime Stage ===
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# PostgreSQL client kütüphanesi
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python paketlerini builder'dan kopyala
+COPY --from=builder /root/.local /root/.local
+
+# Uygulama kodunu kopyala
+COPY . .
+
+# PATH'e ekle
+ENV PATH=/root/.local/bin:$PATH
+
+# Port
+EXPOSE 8000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/api/health')" || exit 1
+
+# Uygulama başlat
+>>>>>>> 65eb5aa (feat: major update - LangGraph ReAct agent implementation)
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
