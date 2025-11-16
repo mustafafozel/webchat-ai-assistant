@@ -1,15 +1,19 @@
 # backend/agent.py
-from typing import Literal, Dict, Any
-from pydantic import BaseModel
-# from langgraph import StateGraph, END  # Bu satırı kaldır/kapat
-from .tools import check_order_status, calculate_shipping, policy_lookup
-from .rag_setup import mini_rag_search
+from typing import Any, Dict, Literal
+
+from pydantic import BaseModel, Field
+
+from backend.config import settings
+from .rag_setup import load_knowledge_base, mini_rag_search
+from .tools import calculate_shipping, check_order_status, policy_lookup
+
+KNOWLEDGE_BASE = load_knowledge_base(settings.KNOWLEDGE_BASE_PATH)
 
 class AgentState(BaseModel):
     session_id: str
     user_message: str
     intent: Literal["faq", "tool", "general"] | None = None
-    context: Dict[str, Any] = {}
+    context: Dict[str, Any] = Field(default_factory=dict)
     answer: str | None = None
 
 def intent_router_node(state: AgentState) -> AgentState:
@@ -23,7 +27,7 @@ def intent_router_node(state: AgentState) -> AgentState:
     return state
 
 def retriever_node(state: AgentState) -> AgentState:
-    state.context["kb"] = mini_rag_search(state.user_message)
+    state.context["kb"] = mini_rag_search(state.user_message, KNOWLEDGE_BASE)
     return state
 
 def tool_caller_node(state: AgentState) -> AgentState:

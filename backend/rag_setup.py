@@ -1,39 +1,40 @@
-<<<<<<< HEAD
-import math
+"""Lightweight knowledge base helpers used by the LangGraph agent."""
 
-class SimpleRAG:
-    def __init__(self):
-        self.docs = []
+from __future__ import annotations
 
-    def add_document(self, text: str):
-        self.docs.append(text)
+import json
+from pathlib import Path
+from typing import Iterable, List, Sequence
 
-    def cosine_sim(self, a, b):
-        a, b = a.lower(), b.lower()
-        common = len(set(a.split()) & set(b.split()))
-        return common / math.sqrt(len(a.split()) * len(b.split()))
 
-    def search(self, query: str):
-        if not self.docs:
-            return None
-        sims = [self.cosine_sim(query, d) for d in self.docs]
-        return self.docs[sims.index(max(sims))] if sims else None
+def load_knowledge_base(path: Path | str) -> List[str]:
+    """Load mini FAQ data from JSON; fallback to defaults when missing."""
+    kb_path = Path(path)
+    if kb_path.exists():
+        with kb_path.open("r", encoding="utf-8") as handler:
+            data = json.load(handler)
+        if isinstance(data, dict):
+            return [f"{key}: {value}" for key, value in data.items()]
+        if isinstance(data, list):
+            return [str(item) for item in data]
 
-=======
-from typing import List
+    # Fallback FAQ items (matches technical brief)
+    return [
+        "İade politikası: 14 gün içinde iade hakkınız bulunmaktadır.",
+        "Kargo süresi: Ortalama teslimat 2-4 iş günüdür.",
+        "Ödeme seçenekleri: Kredi kartı, banka kartı veya kapıda ödeme.",
+        "Politikalarımız müşteri memnuniyeti odaklıdır.",
+    ]
 
-FAQ = [
-  "İade politikası: 14 gün içinde iade hakkı vardır.",
-  "Kargo süresi: Ortalama 2–4 iş günü.",
-  "Ödeme seçenekleri: Kredi kartı veya kapıda ödeme."
-]
 
-def mini_rag_search(query: str, k: int = 1) -> List[str]:
-    q = query.lower()
-    scored = []
-    for doc in FAQ:
-        score = sum(1 for w in q.split() if w in doc.lower())
-        scored.append((score, doc))
-    scored.sort(reverse=True, key=lambda x: x[0])
-    return [d for s, d in scored[:k] if s > 0]
->>>>>>> 65eb5aa (feat: major update - LangGraph ReAct agent implementation)
+def _score_document(query_tokens: Iterable[str], document: str) -> int:
+    tokens = document.lower().split()
+    return sum(1 for token in query_tokens if token in tokens)
+
+
+def mini_rag_search(query: str, knowledge_base: Sequence[str], k: int = 2) -> List[str]:
+    """Return the top-k FAQ entries that roughly match the query."""
+    normalized = query.lower().split()
+    ranked = [(_score_document(normalized, doc), doc) for doc in knowledge_base]
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [doc for score, doc in ranked[:k] if score > 0]

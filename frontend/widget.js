@@ -80,9 +80,21 @@
     };
 
     webSocket.onmessage = (event) => {
-      // Sunucudan gelen AI yanıtı
-      const messageText = event.data;
-      addMessage('assistant', messageText);
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'response') {
+          addMessage('assistant', payload.response);
+          if (payload.metadata && payload.metadata.kb_results && payload.metadata.kb_results.length) {
+            addMessage('system', `📚 Bilgi kaynağı: ${payload.metadata.kb_results[0]}`);
+          }
+        } else if (payload.type === 'error') {
+          addMessage('system', payload.error || 'Bilinmeyen hata.');
+        } else {
+          addMessage('assistant', event.data);
+        }
+      } catch (error) {
+        addMessage('assistant', event.data);
+      }
     };
 
     webSocket.onclose = () => {

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey
+from sqlalchemy import Column, DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
@@ -29,9 +29,7 @@ class Message(Base):
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
     sender = Column(String(50), nullable=False)  # 'user' veya 'assistant'
     content = Column(Text, nullable=False)
-    # metadata alanı JSONB olmalı, ancak basitlik için Text/JSON da olur.
-    # Şimdilik basit tutalım, LangChain memory bunu dolduracak.
-    
+    metadata = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     conversation = relationship("Conversation", back_populates="messages")

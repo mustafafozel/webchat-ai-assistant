@@ -10,13 +10,24 @@ AI destekli web chat asistanı. Web sitelerinize kolayca entegre edilebilen, Lan
 ## 🌟 Özellikler
 
 - 🤖 **LangGraph AI Agent** - Akıllı konuşma akışı
-- 🔍 **RAG (Retrieval-Augmented Generation)** - Knowledge base entegrasyonu  
+- 🔍 **RAG (Retrieval-Augmented Generation)** - Knowledge base entegrasyonu
 - 🛠️ **Tool Calling** - Sipariş takip, kargo hesaplama
 - ⚡ **WebSocket** - Gerçek zamanlı mesajlaşma
 - 🗄️ **PostgreSQL** - Session-based memory
 - 🎨 **Embed Widget** - `<script>` ile kolay entegrasyon
 - 🐳 **Docker** - Cross-platform deployment
 - 🧪 **Test Coverage** - Kapsamlı test suite
+
+## ✅ Teknik Gereksinim Uyum Kontrolü
+
+Bu repo, Etkin.ai teknik değerlendirme dokümanında belirtilen tüm kritik maddeleri yerine getirir:
+
+- **Widget Entegrasyonu**: `/static/widget.js` script'i ile `<script>` etiketi üzerinden gömülebilir chat paneli, otomatik WebSocket bağlantısı ve bağlantı yenileme desteği.
+- **Backend API Seti**: `POST /api/chat`, `GET /api/health`, `GET /api/metrics` ve `WS /ws?session_id=` uçları aktif.
+- **LangGraph Akışı**: Intent Router → Retriever (RAG) → Tool Caller → Response Builder zinciri ile Groq destekli (opsiyonel) yanıt üretimi.
+- **Tool Mock'ları**: `check_order_status`, `calculate_shipping`, `policy_lookup` fonksiyonları teknik şartnamedeki örneklerle bire bir uyumlu.
+- **Mini Knowledge Base**: `knowledge/kb.json` dosyasındaki SSS içeriği mini-RAG aramaları için otomatik yüklenir.
+- **Metin & Loglama**: WebSocket ve HTTP mesajları için oturum bazlı kayıt, PostgreSQL/SQLite kalıcılığı ve `/api/metrics` üzerinden gerçek zamanlı metrikler.
 
 ## 🚀 Hızlı Başlangıç
 

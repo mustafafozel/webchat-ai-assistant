@@ -1,179 +1,167 @@
+"""FastAPI application exposing the WebChat AI Assistant endpoints."""
+
+from __future__ import annotations
+
 import logging
-<<<<<<< HEAD
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from collections import Counter
+from datetime import datetime
 from pathlib import Path
-from backend.database import init_db
-from backend.config import settings
-from groq import Groq
+from typing import Any, Dict
+from uuid import uuid4
 
-app = FastAPI(title="WebChat AI Assistant (LangGraph + WebSocket)")
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("backend.main")
-
-# GROQ istemcisi
-groq_client = Groq(api_key=settings.GROQ_API_KEY)
-
-# Uygulama başlatıldığında veritabanını hazırlıyoruz
-@app.on_event("startup")
-async def on_startup():
-    logger.info("Uygulama başlıyor...")
-    logger.info("Veritabanı tabloları kontrol ediliyor/oluşturuluyor...")
-    await init_db()
-    logger.info("✅ Veritabanı hazır.")
-    logger.info("✅ Uygulama başarıyla başlatıldı.")
-
-# Basit test endpointi
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    """Ana sayfa (chat widget HTML)"""
-    index_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
-    return FileResponse(index_path)
-
-# WebSocket bağlantısı
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    session_id = websocket.query_params.get("session_id")
-    logger.info(f"WebSocket bağlandı: {session_id}")
-
-    try:
-        while True:
-            msg = await websocket.receive_text()
-            logger.info(f"WebSocket Mesaj alındı: {session_id} -> {msg}")
-
-            try:
-                response = await process_message(msg)
-                await websocket.send_text(response)
-            except Exception as e:
-                logger.error(f"WebSocket Hatası ({session_id}): {e}")
-                await websocket.send_text(f"Hata oluştu: {e}")
-
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket bağlantısı kesildi: {session_id}")
-    finally:
-        await websocket.close()
-
-# Asenkron Groq yanıtı oluşturucu
-async def process_message(message: str) -> str:
-    try:
-        completion = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": message}],
-            temperature=0.7,
-        )
-        return completion.choices[0].message.content
-    except Exception as e:
-        return f"Hata oluştu: {str(e)}"
-
-=======
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pathlib import Path
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.database import init_db
 from backend.config import settings
+from backend.database import init_db
 from backend.graph import run_agent
 
-app = FastAPI(title="WebChat AI Assistant")
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# CORS
+app = FastAPI(title=settings.APP_NAME)
+
+frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-# === Startup ===
-@app.on_event("startup")
-async def on_startup():
-    logger.info("🚀 Uygulama başlatılıyor...")
-    await init_db()
-    logger.info("✅ Veritabanı hazır")
+class MetricsState:
+    def __init__(self) -> None:
+        self.started_at = datetime.utcnow()
+        self.total_messages = 0
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+        self.tool_usage: Counter[str] = Counter()
 
-# === Routes ===
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    """Ana sayfa"""
-    index_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
-    if not index_path.exists():
-        raise HTTPException(status_code=404, detail="index.html bulunamadı")
-    return FileResponse(index_path)
+    def register_session(self, session_id: str) -> None:
+        self.sessions.setdefault(session_id, {"message_count": 0, "last_message_at": None})
 
-@app.get("/api/health")
-async def health_check():
-    """Sağlık kontrolü"""
-    return {"status": "healthy", "service": "WebChat AI"}
+    def record_message(self, session_id: str, metadata: Dict[str, Any]) -> None:
+        self.register_session(session_id)
+        session = self.sessions[session_id]
+        session["message_count"] += 1
+        session["last_message_at"] = datetime.utcnow().isoformat()
+        self.total_messages += 1
 
-# === WebSocket ===
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    session_id = websocket.query_params.get("session_id", "unknown")
-    logger.info(f"🔌 WebSocket bağlandı: {session_id}")
-    
-    try:
-        while True:
-            message = await websocket.receive_text()
-            logger.info(f"📨 Mesaj alındı ({session_id}): {message}")
-            
-            try:
-                # LangGraph agent'ı çalıştır
-                response = run_agent(session_id=session_id, user_input=message)
-                await websocket.send_json({
-                    "type": "response",
-                    "response": response,
-                    "session_id": session_id
-                })
-            except Exception as e:
-                logger.error(f"❌ Agent hatası: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "error": str(e),
-                    "session_id": session_id
-                })
-    
-    except WebSocketDisconnect:
-        logger.info(f"🔌 WebSocket kesildi: {session_id}")
+        tool_name = metadata.get("tool")
+        if tool_name:
+            self.tool_usage[tool_name] += 1
 
-# === HTTP Chat API (Fallback) ===
+    def close_session(self, session_id: str) -> None:
+        self.sessions.pop(session_id, None)
+
+    def snapshot(self) -> Dict[str, Any]:
+        uptime = (datetime.utcnow() - self.started_at).total_seconds()
+        return {
+            "uptime_seconds": uptime,
+            "total_messages": self.total_messages,
+            "active_sessions": len(self.sessions),
+            "tool_usage": dict(self.tool_usage),
+            "sessions": [
+                {"session_id": sid, **info}
+                for sid, info in sorted(self.sessions.items())
+            ],
+        }
+
+
+metrics_state = MetricsState()
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str
 
+
 class ChatResponse(BaseModel):
     response: str
     session_id: str
+    metadata: Dict[str, Any] | None = None
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    logger.info("🚀 Uygulama başlatılıyor...")
+    await init_db()
+    logger.info("✅ Veritabanı hazır")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home() -> HTMLResponse:
+    index_path = frontend_dir / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="index.html bulunamadı")
+    return FileResponse(index_path)
+
+
+@app.get("/api/health")
+async def health_check() -> Dict[str, Any]:
+    return {"status": "healthy", "service": settings.APP_NAME}
+
+
+@app.get("/api/metrics")
+async def metrics() -> Dict[str, Any]:
+    return metrics_state.snapshot()
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    session_id = websocket.query_params.get("session_id") or f"session-{uuid4().hex}"
+    await websocket.accept()
+    metrics_state.register_session(session_id)
+    logger.info("🔌 WebSocket bağlandı: %s", session_id)
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            logger.info("📨 Mesaj alındı (%s): %s", session_id, message)
+
+            result = run_agent(session_id=session_id, user_input=message)
+            metrics_state.record_message(session_id, result.get("metadata", {}))
+
+            await websocket.send_json(
+                {
+                    "type": "response",
+                    "response": result["response"],
+                    "session_id": session_id,
+                    "metadata": result.get("metadata", {}),
+                }
+            )
+    except WebSocketDisconnect:
+        logger.info("🔌 WebSocket kesildi: %s", session_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("WebSocket hatası: %s", exc)
+        await websocket.send_json(
+            {"type": "error", "error": "Sunucu hatası", "session_id": session_id}
+        )
+    finally:
+        metrics_state.close_session(session_id)
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
-    """
-    HTTP fallback endpoint
-    """
-    try:
-        response_text = run_agent(
-            session_id=request.session_id,
-            user_input=request.message
-        )
-        
-        return ChatResponse(
-            response=response_text,
-            session_id=request.session_id
-        )
-    
-    except Exception as e:
-        logger.error(f"❌ /api/chat hatası: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"AI asistan hatası: {str(e)}"
-        )
+async def chat_endpoint(request: ChatRequest) -> ChatResponse:
+    if not request.message:
+        raise HTTPException(status_code=422, detail="Mesaj alanı boş bırakılamaz")
 
->>>>>>> 65eb5aa (feat: major update - LangGraph ReAct agent implementation)
+    metrics_state.register_session(request.session_id)
+    result = run_agent(session_id=request.session_id, user_input=request.message)
+    metrics_state.record_message(request.session_id, result.get("metadata", {}))
+
+    return ChatResponse(
+        response=result["response"],
+        session_id=request.session_id,
+        metadata=result.get("metadata", {}),
+    )
