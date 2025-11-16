@@ -183,7 +183,7 @@ docker exec -it webchat-web bash
 ### Health Checks
 
 - **Application Health**: http://localhost:8000/api/health
-- **Metrics**: http://localhost:8000/api/metrics  
+- **Metrics**: http://localhost:8000/api/metrics
 - **API Docs**: http://localhost:8000/docs
 
 ### Log Files
@@ -198,6 +198,12 @@ docker-compose logs postgres
 # Real-time logs
 docker-compose logs -f
 ```
+
+## 📄 Ek Dokümanlar
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): LangGraph akışı, veritabanı şeması ve servis sınırlarının ayrıntılı açıklaması.
+- [demo_scenarios.md](demo_scenarios.md): Canlı tanıtım sırasında izlenebilecek kabul senaryoları.
+- [docs/requirements_status.md](docs/requirements_status.md): Görsel gereksinim listesindeki her maddenin repo karşılığının özeti.
 
 ## 🔧 Configuration
 
