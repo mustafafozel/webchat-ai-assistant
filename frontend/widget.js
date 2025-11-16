@@ -1,4 +1,18 @@
 (function (global) {
+  const CURRENT_SCRIPT = document.currentScript;
+  const DEFAULT_API_BASE = (() => {
+    try {
+      if (CURRENT_SCRIPT) {
+        const url = new URL(CURRENT_SCRIPT.src);
+        return url.origin;
+      }
+    } catch (error) {
+      console.warn("WebChatAI: API origin belirlenemedi, window.location kullanılacak", error);
+    }
+    return window.location.origin;
+  })();
+  const SESSION_STORAGE_KEY = "webchatai-session-id";
+
   let webSocket = null;
   let config = {};
   let isPanelOpen = false;
@@ -8,7 +22,7 @@
     if (!document.querySelector('link[href*="widget.css"]')) {
         const cssLink = document.createElement('link');
         cssLink.rel = 'stylesheet';
-        cssLink.href = '/static/widget.css'; // CSS dosyanızın yolu
+        cssLink.href = buildAssetUrl('/static/widget.css');
         document.head.appendChild(cssLink);
     }
 
@@ -64,11 +78,29 @@
     body.scrollTop = body.scrollHeight;
   }
 
+  function buildAssetUrl(path) {
+    try {
+      return new URL(path, config.apiBase).toString();
+    } catch (error) {
+      console.warn("WebChatAI: asset URL oluşturulamadı", error);
+      return path;
+    }
+  }
+
+  function getWebSocketUrl() {
+    try {
+      const base = new URL(config.apiBase);
+      const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${base.host}/ws?session_id=${encodeURIComponent(config.sessionId)}`;
+    } catch (error) {
+      console.warn('WebChatAI: WS URL oluşturulamadı, window.location kullanılacak', error);
+      const fallbackProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${fallbackProtocol}//${window.location.host}/ws?session_id=${encodeURIComponent(config.sessionId)}`;
+    }
+  }
+
   function connectWebSocket() {
-    // HTTP/HTTPS adresini WS/WSS adresine çevir
-    const wsProtocol = config.apiBase.startsWith('https:') ? 'wss://' : 'ws://';
-    // 'http://localhost:8000' -> 'ws://localhost:8000/ws?session_id=...'
-    const wsUrl = `${wsProtocol}${config.apiBase.replace(/^https?:\/\//, '')}/ws?session_id=${config.sessionId}`;
+    const wsUrl = getWebSocketUrl();
     
     console.log('WebSocket bağlantısı kuruluyor:', wsUrl);
     
@@ -125,15 +157,21 @@
     // Kullanıcı mesajını ekrana bas
     addMessage('user', message);
     
-    // Mesajı WebSocket üzerinden sunucuya gönder
-    webSocket.send(message);
-    
+    const payload = {
+      message,
+      session_id: config.sessionId,
+    };
+
+    // Mesajı WebSocket üzerinden sunucuya JSON olarak gönder
+    webSocket.send(JSON.stringify(payload));
+
     input.value = '';
   }
 
   function init(options = {}) {
-    config.apiBase = options.apiBase || window.location.origin;
-    config.sessionId = options.sessionId || 'session-' + Math.random().toString(36).substr(2, 9);
+    const providedBase = options.apiUrl || options.apiBase || DEFAULT_API_BASE;
+    config.apiBase = (providedBase || window.location.origin).replace(/\/$/, '');
+    config.sessionId = resolveSessionId(options.sessionId);
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', setup);
@@ -141,7 +179,36 @@
       setup();
     }
   }
-  
+
+  function resolveSessionId(customSessionId) {
+    const normalized = typeof customSessionId === 'string' ? customSessionId.trim() : '';
+    if (normalized) {
+      persistSessionId(normalized);
+      return normalized;
+    }
+
+    try {
+      const stored = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (stored) {
+        return stored;
+      }
+    } catch (error) {
+      console.warn('WebChatAI: localStorage okunamadı', error);
+    }
+
+    const generated = 'session-' + Math.random().toString(36).substr(2, 9);
+    persistSessionId(generated);
+    return generated;
+  }
+
+  function persistSessionId(value) {
+    try {
+      localStorage.setItem(SESSION_STORAGE_KEY, value);
+    } catch (error) {
+      console.warn('WebChatAI: session id saklanamadı', error);
+    }
+  }
+
   function setup() {
     createWidget();
     

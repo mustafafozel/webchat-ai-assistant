@@ -15,6 +15,7 @@ AI destekli web chat asistanı. Web sitelerinize kolayca entegre edilebilen, Lan
 - ⚡ **WebSocket** - Gerçek zamanlı mesajlaşma
 - 🗄️ **PostgreSQL** - Session-based memory
 - 🎨 **Embed Widget** - `<script>` ile kolay entegrasyon
+- 🔄 **Kalıcı Oturum Kimliği** - Widget JSON mesajları ve localStorage üzerinde session_id saklama
 - 🐳 **Docker** - Cross-platform deployment
 - 🧪 **Test Coverage** - Kapsamlı test suite
 
@@ -80,6 +81,8 @@ Web sitenize eklemek için:
 </html>
 ```
 
+> `widget.js` localStorage üzerinde tekil bir `session_id` saklar ve bağlantı koptuğunda aynı kimlik ile otomatik yeniden bağlanır.
+
 ### API Kullanımı
 
 #### HTTP Chat Endpoint
@@ -110,6 +113,8 @@ ws.onmessage = function(event) {
     console.log('AI Response:', response.response);
 };
 ```
+
+> WebSocket mesajlarında `message` alanı zorunludur; JSON formatında gönderilmeyen içerikler otomatik olarak düz metin olarak işlenir ancak boş mesajlara izin verilmez.
 
 ## 🛠️ Development
 

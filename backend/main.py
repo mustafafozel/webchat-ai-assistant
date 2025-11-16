@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from datetime import datetime
@@ -122,10 +123,38 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     try:
         while True:
-            message = await websocket.receive_text()
-            logger.info("📨 Mesaj alındı (%s): %s", session_id, message)
+            raw_message = await websocket.receive_text()
+            payload_session_id = None
+            message_text = raw_message
 
-            result = run_agent(session_id=session_id, user_input=message)
+            try:
+                parsed = json.loads(raw_message)
+            except json.JSONDecodeError:
+                parsed = None
+
+            if isinstance(parsed, dict):
+                message_text = str(parsed.get("message", "")).strip()
+                payload_session_id = parsed.get("session_id")
+            else:
+                message_text = str(raw_message).strip()
+
+            if payload_session_id:
+                session_id = str(payload_session_id)
+                metrics_state.register_session(session_id)
+
+            if not message_text:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "error": "Mesaj alanı boş olamaz",
+                        "session_id": session_id,
+                    }
+                )
+                continue
+
+            logger.info("📨 Mesaj alındı (%s): %s", session_id, message_text)
+
+            result = run_agent(session_id=session_id, user_input=message_text)
             metrics_state.record_message(session_id, result.get("metadata", {}))
 
             await websocket.send_json(
