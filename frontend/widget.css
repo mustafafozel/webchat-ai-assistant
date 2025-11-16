@@ -95,3 +95,54 @@
   background: #fff;
   border: 1px solid #e5e7eb;
 }
+
+.webchatai-msg.system {
+  background: #eef2ff;
+  color: #4338ca;
+  border: 1px dashed rgba(79, 70, 229, 0.3);
+  font-size: 0.85rem;
+}
+
+.webchatai-msg.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-style: italic;
+  color: #475569;
+}
+
+.webchatai-typing-label {
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.webchatai-typing-dot {
+  width: 6px;
+  height: 6px;
+  background: #94a3b8;
+  border-radius: 999px;
+  animation: webchatai-pulse 1.4s infinite ease-in-out;
+}
+
+.webchatai-typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.webchatai-typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes webchatai-pulse {
+  0% {
+    transform: translateY(0);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translateY(-2px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 0.8;
+  }
+}

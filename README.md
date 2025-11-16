@@ -16,6 +16,8 @@ AI destekli web chat asistanı. Web sitelerinize kolayca entegre edilebilen, Lan
 - 🗄️ **PostgreSQL** - Session-based memory
 - 🎨 **Embed Widget** - `<script>` ile kolay entegrasyon
 - 🔄 **Kalıcı Oturum Kimliği** - Widget JSON mesajları ve localStorage üzerinde session_id saklama
+- 💬 **Canlı Widget UX** - "Asistan yazıyor" göstergesi ve sistem mesajları ile şeffaf iletişim
+- 📚 **10+ Maddelik Knowledge Base** - Politika ve SSS içerikleri mini-RAG katmanına hazır
 - 🐳 **Docker** - Cross-platform deployment
 - 🧪 **Test Coverage** - Kapsamlı test suite
 

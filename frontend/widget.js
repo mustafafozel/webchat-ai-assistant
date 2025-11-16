@@ -12,6 +12,7 @@
     return window.location.origin;
   })();
   const SESSION_STORAGE_KEY = "webchatai-session-id";
+  const TYPING_TEXT = "Asistan yazıyor...";
 
   let webSocket = null;
   let config = {};
@@ -54,28 +55,38 @@
 
   function addMessage(type, text) {
     const body = document.getElementById('webchatai-body');
-    
-    // "yazıyor..." mesajını kaldır
+    if (!body) return;
+
     const typingMsg = document.getElementById('webchatai-typing');
     if (typingMsg) {
       typingMsg.remove();
     }
 
-    // "yazıyor..." mesajı geldiyse ve tip 'user' değilse, göster
-    if (type === 'assistant' && text === 'Asistan yazıyor...') {
+    if (type === 'assistant' && text === TYPING_TEXT) {
       const msg = document.createElement('div');
-      msg.className = 'webchatai-msg assistant typing'; // 'typing' sınıfı ekleyebiliriz
+      msg.className = 'webchatai-msg assistant typing';
       msg.id = 'webchatai-typing';
-      msg.textContent = text;
+      msg.innerHTML = `
+        <span class="webchatai-typing-dot"></span>
+        <span class="webchatai-typing-dot"></span>
+        <span class="webchatai-typing-dot"></span>
+        <span class="webchatai-typing-label">${text}</span>
+      `;
       body.appendChild(msg);
     } else {
-      // Normal mesaj
       const msg = document.createElement('div');
       msg.className = 'webchatai-msg ' + type;
       msg.textContent = text;
       body.appendChild(msg);
     }
     body.scrollTop = body.scrollHeight;
+  }
+
+  function showTypingIndicator() {
+    if (document.getElementById('webchatai-typing')) {
+      return;
+    }
+    addMessage('assistant', TYPING_TEXT);
   }
 
   function buildAssetUrl(path) {
@@ -156,6 +167,7 @@
     
     // Kullanıcı mesajını ekrana bas
     addMessage('user', message);
+    showTypingIndicator();
     
     const payload = {
       message,
