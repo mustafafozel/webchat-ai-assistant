@@ -1,16 +1,18 @@
-.PHONY: up clean fix build
+.PHONY: up down logs test
 
 up:
-	@echo "🧩 Ortam temizliği ve servis başlatma başlıyor..."
-	@bash ./fix_docker_ports.sh
+@echo "🚀 docker compose up --build"
+@docker compose up -d --build
 
-clean:
-	@bash ./fix_docker_ports.sh
 
-fix:
-	@bash ./fix_docker_ports.sh
+down:
+@echo "🧹 docker compose down"
+@docker compose down -v
 
-build:
-	@echo "⚙️  Docker imajı optimize edilerek oluşturuluyor..."
-	@docker compose build --progress=plain --build-arg BUILDKIT_INLINE_CACHE=1
 
+logs:
+@docker compose logs -f web
+
+
+test:
+@pytest -q

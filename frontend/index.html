@@ -307,6 +307,20 @@
     trimMessages();
   }
 
+  function appendSystemMessage(text) {
+    const wrapper = document.createElement('div');
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble assistant';
+    bubble.style.background = '#f8fafc';
+    bubble.style.fontSize = '.85rem';
+    bubble.style.color = '#475569';
+    bubble.textContent = text;
+    wrapper.appendChild(bubble);
+    messagesEl.appendChild(wrapper);
+    scrollToBottom();
+    trimMessages();
+  }
+
   // Append assistant bubble
   function appendAssistantMessage(text) {
     // Remove typing indicator if present
@@ -401,29 +415,35 @@
       };
 
       ws.onmessage = (ev) => {
-        const data = ev.data;
-        // Backend sometimes sends a "typing" message (exact match "Asistan yazıyor...") before actual response.
-        // We treat that as ephemeral typing indicator, not persistent message.
-        if (data && data.trim() === 'Asistan yazıyor...') {
-          showTypingIndicator();
-          return;
+        removeTypingIndicator();
+        try {
+          const payload = JSON.parse(ev.data);
+          if (payload.type === 'response') {
+            appendAssistantMessage(payload.response);
+            if (payload.metadata && payload.metadata.kb_results && payload.metadata.kb_results.length) {
+              appendSystemMessage('📚 Bilgi kaynağı: ' + payload.metadata.kb_results[0]);
+            }
+          } else if (payload.type === 'error') {
+            appendSystemMessage('⚠️ ' + (payload.error || 'Bilinmeyen hata'));
+          } else if (typeof payload === 'string') {
+            appendAssistantMessage(payload);
+          }
+        } catch (err) {
+          const data = (ev.data || '').toString();
+          if (data.trim() === 'Asistan yazıyor...') {
+            showTypingIndicator();
+            return;
+          }
+          appendAssistantMessage(data);
         }
-        // Otherwise it's an actual assistant message (remove typing if any and show)
-        appendAssistantMessage(data);
       };
 
       ws.onclose = (ev) => {
         connected = false;
         // show ephemeral system message
-        const sys = document.createElement('div');
-        sys.className = 'text-center text-xs text-gray-400';
-        sys.style.margin = '.4rem 0';
-        sys.textContent = 'WebSocket bağlantısı kapandı — yeniden bağlanılıyor...';
-        messagesEl.appendChild(sys);
-        scrollToBottom();
+        appendSystemMessage('WebSocket bağlantısı kapandı — yeniden bağlanılıyor...');
         // attempt reconnect after delay
         setTimeout(() => {
-          try { messagesEl.removeChild(sys); } catch(_) {}
           connectWebSocket();
         }, RECONNECT_MS);
       };
@@ -456,29 +476,17 @@
       if (!res.ok) {
         const txt = await res.text();
         // show error system message
-        const sys = document.createElement('div');
-        sys.className = 'text-center text-xs text-red-500';
-        sys.textContent = 'HTTP fallback hata: ' + res.status + ' ' + (txt || '');
-        messagesEl.appendChild(sys);
-        scrollToBottom();
+        appendSystemMessage('HTTP fallback hata: ' + res.status + ' ' + (txt || ''));
         return;
       }
       const j = await res.json();
       if (j && j.response) {
         appendAssistantMessage(j.response);
       } else {
-        const sys = document.createElement('div');
-        sys.className = 'text-center text-xs text-gray-500';
-        sys.textContent = 'HTTP fallback: Beklenmeyen cevap.';
-        messagesEl.appendChild(sys);
-        scrollToBottom();
+        appendSystemMessage('HTTP fallback: Beklenmeyen cevap.');
       }
     } catch (e) {
-      const sys = document.createElement('div');
-      sys.className = 'text-center text-xs text-red-500';
-      sys.textContent = 'HTTP fallback exception: ' + e.toString();
-      messagesEl.appendChild(sys);
-      scrollToBottom();
+      appendSystemMessage('HTTP fallback exception: ' + e.toString());
     }
   }
 

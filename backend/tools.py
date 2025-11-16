@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import unicodedata
 from langchain_core.tools import StructuredTool
+
+
+def _normalize_token(value: str) -> str:
+    folded = unicodedata.normalize("NFKD", value.casefold())
+    return "".join(ch for ch in folded if not unicodedata.combining(ch))
 
 ORDER_STATUS = {
     "12345": "Siparişiniz kargoya verildi.",
@@ -17,11 +23,19 @@ SHIPPING_PRICES = {
     "antalya": 35,
 }
 
-POLICY_TEXTS = {
+CITY_DISPLAY = {
+    "istanbul": "İstanbul",
+    "ankara": "Ankara",
+    "izmir": "İzmir",
+    "antalya": "Antalya",
+}
+
+RAW_POLICY_TEXTS = {
     "iade": "İade politikası: 14 gün içinde koşulsuz iade hakkı bulunur.",
     "kargo": "Kargo politikası: 2-4 iş günü içinde teslimat yapılır.",
     "ödeme": "Ödeme politikası: Kredi kartı, banka kartı veya kapıda ödeme kabul edilir.",
 }
+POLICY_TEXTS = {_normalize_token(key): text for key, text in RAW_POLICY_TEXTS.items()}
 
 
 def check_order_status(order_id: str) -> str:
@@ -32,13 +46,15 @@ def check_order_status(order_id: str) -> str:
 
 def calculate_shipping(city: str) -> str:
     """Return a mock shipping price."""
-    price = SHIPPING_PRICES.get(city.lower(), 40)
-    return f"{city.title()} için tahmini kargo ücreti: {price} TL"
+    key = _normalize_token(city)
+    price = SHIPPING_PRICES.get(key, 40)
+    display = CITY_DISPLAY.get(key, city.title())
+    return f"{display} için tahmini kargo ücreti: {price} TL"
 
 
 def policy_lookup(topic: str) -> str:
     """Return a short FAQ/policy snippet."""
-    normalized = topic.lower()
+    normalized = _normalize_token(topic)
     return POLICY_TEXTS.get(normalized, "Bu konu hakkında kayıtlı politikamız bulunamadı.")
 
 

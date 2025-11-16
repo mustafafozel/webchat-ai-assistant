@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Annotated, Dict, List, Literal, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -41,16 +42,26 @@ class AgentState(TypedDict):
     next: Literal["retriever", "tool_caller", "response_builder", str]
 
 
+def _normalize_text(text: str) -> str:
+    """Case-fold and strip diacritics for robust intent detection."""
+    folded = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(char for char in folded if not unicodedata.combining(char))
+
+
+FAQ_KEYWORDS = [_normalize_text(word) for word in ["iade", "kargo", "ödeme", "policy", "faq"]]
+TOOL_KEYWORDS = [_normalize_text(word) for word in ["sipariş", "order", "takip", "kargo ücret"]]
+
+
 def intent_router_node(state: AgentState) -> AgentState:
     """Route incoming message to the appropriate node."""
-    last_message = state["messages"][-1].content.lower()
+    last_message = _normalize_text(state["messages"][-1].content)
     state["intent"] = "general"
     state["next"] = "response_builder"
 
-    if any(keyword in last_message for keyword in ["iade", "kargo", "ödeme", "policy", "faq"]):
+    if any(keyword in last_message for keyword in FAQ_KEYWORDS):
         state["intent"] = "faq"
         state["next"] = "retriever"
-    elif any(keyword in last_message for keyword in ["sipariş", "order", "takip", "kargo ücret"]):
+    elif any(keyword in last_message for keyword in TOOL_KEYWORDS):
         state["intent"] = "tool"
         state["next"] = "tool_caller"
 
@@ -74,11 +85,12 @@ def _extract_order_id(text: str) -> str:
 
 def tool_caller_node(state: AgentState) -> AgentState:
     """Execute mock tools without waiting for LLM function calls."""
-    message = state["messages"][-1].content.lower()
+    raw_message = state["messages"][-1].content
+    message = _normalize_text(raw_message)
     context = state.setdefault("context", {})
 
-    if "sipariş" in message or re.search(r"\d{4,}", message):
-        order_id = _extract_order_id(message)
+    if "sipariş" in message or re.search(r"\d{4,}", raw_message):
+        order_id = _extract_order_id(raw_message)
         context["tool_name"] = "check_order_status"
         context["tool_result"] = check_order_status(order_id)
     elif "kargo" in message and ("hesap" in message or "ücret" in message):
@@ -87,7 +99,14 @@ def tool_caller_node(state: AgentState) -> AgentState:
         context["tool_name"] = "calculate_shipping"
         context["tool_result"] = calculate_shipping(city)
     else:
-        topic = "iade" if "iade" in message else "kargo"
+        if "iade" in message:
+            topic = "iade"
+        elif "kargo" in message:
+            topic = "kargo"
+        elif "odeme" in message or "ödeme" in message:
+            topic = "ödeme"
+        else:
+            topic = "kargo"
         context["tool_name"] = "policy_lookup"
         context["tool_result"] = policy_lookup(topic)
 
@@ -165,7 +184,7 @@ workflow.add_edge("tool_caller", "response_builder")
 graph_app = workflow.compile()
 
 
-def _persist_messages(session_id: str, user_message: str, ai_message: str, metadata: Dict[str, str]):
+def _persist_messages(session_id: str, user_message: str, ai_message: str, metadata: Dict[str, object]):
     db = SessionLocal()
     try:
         conversation = db.query(Conversation).filter_by(session_id=session_id).first()
@@ -180,7 +199,7 @@ def _persist_messages(session_id: str, user_message: str, ai_message: str, metad
                 conversation_id=conversation.id,
                 sender="user",
                 content=user_message,
-                metadata={"intent": metadata.get("intent")},
+                metadata_json={"intent": metadata.get("intent")},
             )
         )
         db.add(
@@ -188,7 +207,7 @@ def _persist_messages(session_id: str, user_message: str, ai_message: str, metad
                 conversation_id=conversation.id,
                 sender="assistant",
                 content=ai_message,
-                metadata=metadata,
+                metadata_json=metadata,
             )
         )
         db.commit()

@@ -11,5 +11,6 @@ Bu dosya, müşteri tarafından paylaşılan teknik gereksinim görsellerindeki 
 | Oturum bazlı veri tabanı kalıcılığı | SQLAlchemy `Conversation`/`Message` modelleri ve `_persist_messages` fonksiyonu oturum geçmişini saklar. | `backend/models.py`, `backend/database.py`, `backend/graph.py` |
 | Gömülebilir widget ve otomatik yeniden bağlanan WebSocket istemcisi | `frontend/widget.js` script'i CSS'i yükler, paneli oluşturur, WebSocket'i yönetir ve bağlantıyı yeniler. | `frontend/widget.js`, `frontend/widget.css` |
 | Dokümantasyon ve entegrasyon talimatları | README teknik gereksinim checklist'i, kurulum, API kullanımı ve widget entegrasyon örneğini içerir. | `README.md` |
+| ARCHITECTURE & Demo senaryoları | Mimari açıklama ve kabul testi akışları ayrı dosyalarda listelendi. | `ARCHITECTURE.md`, `demo_scenarios.md` |
 
 > Not: Otomatik testler, FastAPI bağımlılığı bu çalışma ortamında kurulu olmadığı için CI dışında başarısız olabilir. Gereksinim setini etkileyen bir eksik tespit edilmemiştir.

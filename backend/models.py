@@ -24,12 +24,12 @@ class Message(Base):
     (id, conversation_id, sender, content, metadata, created_at)
     """
     __tablename__ = "messages"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
     sender = Column(String(50), nullable=False)  # 'user' veya 'assistant'
     content = Column(Text, nullable=False)
-    metadata = Column(JSON, default=dict)
+    metadata_json = Column("metadata", JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")

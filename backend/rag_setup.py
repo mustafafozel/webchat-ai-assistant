@@ -5,6 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Iterable, List, Sequence
+import unicodedata
+
+
+def _normalize(text: str) -> str:
+    folded = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(ch for ch in folded if not unicodedata.combining(ch))
 
 
 def load_knowledge_base(path: Path | str) -> List[str]:
@@ -28,13 +34,13 @@ def load_knowledge_base(path: Path | str) -> List[str]:
 
 
 def _score_document(query_tokens: Iterable[str], document: str) -> int:
-    tokens = document.lower().split()
+    tokens = _normalize(document).split()
     return sum(1 for token in query_tokens if token in tokens)
 
 
 def mini_rag_search(query: str, knowledge_base: Sequence[str], k: int = 2) -> List[str]:
     """Return the top-k FAQ entries that roughly match the query."""
-    normalized = query.lower().split()
+    normalized = _normalize(query).split()
     ranked = [(_score_document(normalized, doc), doc) for doc in knowledge_base]
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [doc for score, doc in ranked[:k] if score > 0]
